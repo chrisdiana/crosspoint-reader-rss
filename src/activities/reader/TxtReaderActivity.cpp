@@ -1,6 +1,7 @@
 #include "TxtReaderActivity.h"
 
 #include <FontCacheManager.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -234,36 +235,88 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>
     // Track position within this source line (in bytes from pos)
     size_t lineBytePos = 0;
 
-    // Emit at least one visual line for each source line (including blank lines),
-    // then continue with wrapping when needed.
+    bool isMarkdown = FsHelpers::hasMarkdownExtension(txt->getPath());
+    char marker = '\7'; // Default: normal text
+    EpdFontFamily::Style style = EpdFontFamily::REGULAR;
+    int indent = 0;
+    std::string cleanLine = line;
+
+    if (isMarkdown) {
+      if (line.rfind("# ", 0) == 0) {
+        marker = '\1'; // H1
+        style = EpdFontFamily::BOLD;
+        cleanLine = line.substr(2);
+      } else if (line.rfind("## ", 0) == 0) {
+        marker = '\2'; // H2
+        style = EpdFontFamily::BOLD;
+        cleanLine = line.substr(3);
+      } else if (line.rfind("### ", 0) == 0) {
+        marker = '\3'; // H3
+        style = EpdFontFamily::BOLD;
+        cleanLine = line.substr(4);
+      } else if (line.rfind("> ", 0) == 0) {
+        marker = '\4'; // Blockquote
+        style = EpdFontFamily::ITALIC;
+        indent = 15;
+        cleanLine = line.substr(2);
+      } else if (line.rfind("- ", 0) == 0) {
+        marker = '\5'; // Bullet point
+        indent = 15;
+        cleanLine = "•  " + line.substr(2);
+      } else if (line.rfind("* ", 0) == 0) {
+        marker = '\5'; // Bullet point
+        indent = 15;
+        cleanLine = "•  " + line.substr(2);
+      } else if (line == "---" || line == "***" || line == "___") {
+        marker = '\6'; // Horizontal rule
+        cleanLine = "";
+      }
+    }
+
+    bool firstSegment = true;
     do {
-      if (line.empty()) {
-        outLines.emplace_back();
+      if (cleanLine.empty() && marker != '\6') {
+        std::string wrapped = "";
+        wrapped += marker;
+        outLines.push_back(wrapped);
         break;
       }
 
-      int lineWidth = renderer.getTextAdvanceX(cachedFontId, line.c_str(), EpdFontFamily::REGULAR);
+      if (marker == '\6') {
+        std::string wrapped = "";
+        wrapped += marker;
+        outLines.push_back(wrapped);
+        break;
+      }
 
-      if (lineWidth <= viewportWidth) {
-        outLines.push_back(line);
+      int currentIndent = firstSegment ? indent : (marker == '\5' ? 15 : indent);
+      int maxW = viewportWidth - currentIndent;
+
+      int lineWidth = renderer.getTextAdvanceX(cachedFontId, cleanLine.c_str(), style);
+
+      if (lineWidth <= maxW) {
+        std::string wrapped = "";
+        wrapped += (firstSegment ? marker : (marker == '\5' ? '\4' : marker));
+        wrapped += cleanLine;
+        outLines.push_back(wrapped);
         lineBytePos = displayLen;  // Consumed entire display content
-        line.clear();
+        cleanLine.clear();
         break;
       }
 
       // Find break point
-      size_t breakPos = line.length();
-      while (breakPos > 0 && renderer.getTextAdvanceX(cachedFontId, line.substr(0, breakPos).c_str(),
-                                                      EpdFontFamily::REGULAR) > viewportWidth) {
+      size_t breakPos = cleanLine.length();
+      while (breakPos > 0 && renderer.getTextAdvanceX(cachedFontId, cleanLine.substr(0, breakPos).c_str(),
+                                                      style) > maxW) {
         // Try to break at space
-        size_t spacePos = line.rfind(' ', breakPos - 1);
+        size_t spacePos = cleanLine.rfind(' ', breakPos - 1);
         if (spacePos != std::string::npos && spacePos > 0) {
           breakPos = spacePos;
         } else {
           // Break at character boundary for UTF-8
           breakPos--;
           // Make sure we don't break in the middle of a UTF-8 sequence
-          while (breakPos > 0 && (line[breakPos] & 0xC0) == 0x80) {
+          while (breakPos > 0 && (cleanLine[breakPos] & 0xC0) == 0x80) {
             breakPos--;
           }
         }
@@ -273,19 +326,43 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>
         breakPos = 1;
       }
 
-      outLines.push_back(line.substr(0, breakPos));
+      std::string wrapped = "";
+      wrapped += (firstSegment ? marker : (marker == '\5' ? '\4' : marker));
+      wrapped += cleanLine.substr(0, breakPos);
+      outLines.push_back(wrapped);
 
       // Skip space at break point
       size_t skipChars = breakPos;
-      if (breakPos < line.length() && line[breakPos] == ' ') {
+      if (breakPos < cleanLine.length() && cleanLine[breakPos] == ' ') {
         skipChars++;
       }
-      lineBytePos += skipChars;
-      line = line.substr(skipChars);
-    } while (!line.empty() && static_cast<int>(outLines.size()) < linesPerPage);
+
+      size_t sourceConsumed = skipChars;
+      if (firstSegment) {
+        if (marker == '\1') {
+          sourceConsumed = skipChars + 2;
+        } else if (marker == '\2') {
+          sourceConsumed = skipChars + 3;
+        } else if (marker == '\3') {
+          sourceConsumed = skipChars + 4;
+        } else if (marker == '\4') {
+          sourceConsumed = skipChars + 2;
+        } else if (marker == '\5') {
+          if (skipChars <= 4) {
+            sourceConsumed = 2;
+          } else {
+            sourceConsumed = 2 + (skipChars - 4);
+          }
+        }
+      }
+      lineBytePos += sourceConsumed;
+
+      cleanLine = cleanLine.substr(skipChars);
+      firstSegment = false;
+    } while (!cleanLine.empty() && static_cast<int>(outLines.size()) < linesPerPage);
 
     // Determine how much of the source buffer we consumed
-    if (line.empty()) {
+    if (cleanLine.empty()) {
       // Fully consumed this source line, move past the newline
       pos = lineEnd + 1;
     } else {
@@ -355,33 +432,80 @@ void TxtReaderActivity::renderPage() {
   // Render text lines with alignment
   auto renderLines = [&]() {
     int y = cachedOrientedMarginTop;
-    for (const auto& line : currentPageLines) {
-      if (!line.empty()) {
-        int x = cachedOrientedMarginLeft;
+    bool isMarkdown = FsHelpers::hasMarkdownExtension(txt->getPath());
+
+    for (const auto& rawLine : currentPageLines) {
+      if (rawLine.empty()) {
+        y += lineHeight;
+        continue;
+      }
+
+      std::string line = rawLine;
+      EpdFontFamily::Style style = EpdFontFamily::REGULAR;
+      int indent = 0;
+      bool isH1 = false;
+      bool isHR = false;
+      bool isQuote = false;
+
+      if (isMarkdown) {
+        char type = line[0];
+        line = line.substr(1);
+
+        if (type == '\1') { // H1
+          style = EpdFontFamily::BOLD;
+          isH1 = true;
+        } else if (type == '\2' || type == '\3') { // H2, H3
+          style = EpdFontFamily::BOLD;
+        } else if (type == '\4') { // Quote
+          style = EpdFontFamily::ITALIC;
+          indent = 15;
+          isQuote = true;
+        } else if (type == '\5') { // Bullet
+          indent = 15;
+        } else if (type == '\6') { // HR
+          isHR = true;
+        }
+      }
+
+      if (isHR) {
+        int startX = cachedOrientedMarginLeft + 10;
+        int endX = cachedOrientedMarginLeft + viewportWidth - 10;
+        int lineY = y + lineHeight / 2;
+        renderer.drawLine(startX, lineY, endX, lineY, true);
+      } else if (!line.empty()) {
+        int x = cachedOrientedMarginLeft + indent;
 
         // Apply text alignment
         switch (cachedParagraphAlignment) {
           case CrossPointSettings::LEFT_ALIGN:
           default:
-            // x already set to left margin
+            // x already set
             break;
           case CrossPointSettings::CENTER_ALIGN: {
-            int textWidth = renderer.getTextAdvanceX(cachedFontId, line.c_str(), EpdFontFamily::REGULAR);
-            x = cachedOrientedMarginLeft + (contentWidth - textWidth) / 2;
+            int textWidth = renderer.getTextAdvanceX(cachedFontId, line.c_str(), style);
+            x = cachedOrientedMarginLeft + indent + (viewportWidth - indent - textWidth) / 2;
             break;
           }
           case CrossPointSettings::RIGHT_ALIGN: {
-            int textWidth = renderer.getTextAdvanceX(cachedFontId, line.c_str(), EpdFontFamily::REGULAR);
-            x = cachedOrientedMarginLeft + contentWidth - textWidth;
+            int textWidth = renderer.getTextAdvanceX(cachedFontId, line.c_str(), style);
+            x = cachedOrientedMarginLeft + viewportWidth - textWidth;
             break;
           }
           case CrossPointSettings::JUSTIFIED:
-            // For plain text, justified is treated as left-aligned
-            // (true justification would require word spacing adjustments)
             break;
         }
 
-        renderer.drawText(cachedFontId, x, y, line.c_str());
+        if (isQuote) {
+          int barX = cachedOrientedMarginLeft + 5;
+          renderer.fillRect(barX, y, 2, lineHeight, true);
+        }
+
+        renderer.drawText(cachedFontId, x, y, line.c_str(), true, style);
+
+        if (isH1) {
+          int lineY = y + lineHeight - 2;
+          renderer.drawLine(cachedOrientedMarginLeft, lineY, cachedOrientedMarginLeft + viewportWidth, lineY, true);
+        }
       }
       y += lineHeight;
     }

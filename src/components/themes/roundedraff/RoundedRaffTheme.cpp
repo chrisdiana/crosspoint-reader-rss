@@ -200,9 +200,15 @@ void RoundedRaffTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int butt
   const int rowHeight = renderer.getLineHeight(kTitleFontId) + 20;  // 10px top + 10px bottom
   const int rowGap = kSelectableRowGap;
   const int rowStep = rowHeight + rowGap;
-  const int pageItems = std::max(1, rect.height / rowStep);
+  const int pageItems = std::min(6, std::max(1, rect.height / rowStep));
   const int safeSelectedIndex = std::max(0, selectedIndex);
-  const int pageStartIndex = (safeSelectedIndex / pageItems) * pageItems;
+  int pageStartIndex = safeSelectedIndex - (pageItems - 1) / 2;
+  if (pageStartIndex > buttonCount - pageItems) {
+    pageStartIndex = buttonCount - pageItems;
+  }
+  if (pageStartIndex < 0) {
+    pageStartIndex = 0;
+  }
   const int menuTop = rect.y;
   const int textLineHeight = renderer.getLineHeight(kTitleFontId);
   const int menuMaxWidth = std::max(0, rect.width - sidePadding * 2);

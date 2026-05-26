@@ -26,6 +26,26 @@
 #include "components/icons/text24.h"
 #include "components/icons/transfer.h"
 #include "components/icons/wifi.h"
+#include "components/icons/calculator.h"
+#include "components/icons/calculator24.h"
+#include "components/icons/weather.h"
+#include "components/icons/weather24.h"
+#include "components/icons/sudoku.h"
+#include "components/icons/sudoku24.h"
+#include "components/icons/reddit.h"
+#include "components/icons/reddit24.h"
+#include "components/icons/clock.h"
+#include "components/icons/clock24.h"
+#include "components/icons/rss.h"
+#include "components/icons/rss24.h"
+#include "components/icons/wikipedia.h"
+#include "components/icons/wikipedia24.h"
+#include "components/icons/minesweeper.h"
+#include "components/icons/minesweeper24.h"
+#include "components/icons/chess.h"
+#include "components/icons/chess24.h"
+#include "components/icons/dice.h"
+#include "components/icons/dice24.h"
 #include "fontIds.h"
 
 // Internal constants
@@ -52,6 +72,26 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return Book24Icon;
       case UIIcon::File:
         return File24Icon;
+      case UIIcon::Calculator:
+        return Calculator24Icon;
+      case UIIcon::Weather:
+        return Weather24Icon;
+      case UIIcon::Sudoku:
+        return Sudoku24Icon;
+      case UIIcon::Reddit:
+        return Reddit24Icon;
+      case UIIcon::Clock:
+        return Clock24Icon;
+      case UIIcon::Rss:
+        return Rss24Icon;
+      case UIIcon::Wikipedia:
+        return Wikipedia24Icon;
+      case UIIcon::Minesweeper:
+        return Minesweeper24Icon;
+      case UIIcon::Chess:
+        return Chess24Icon;
+      case UIIcon::Dice:
+        return Dice24Icon;
       default:
         return nullptr;
     }
@@ -73,6 +113,26 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return WifiIcon;
       case UIIcon::Hotspot:
         return HotspotIcon;
+      case UIIcon::Calculator:
+        return CalculatorIcon;
+      case UIIcon::Weather:
+        return WeatherIcon;
+      case UIIcon::Sudoku:
+        return SudokuIcon;
+      case UIIcon::Reddit:
+        return RedditIcon;
+      case UIIcon::Clock:
+        return ClockIcon;
+      case UIIcon::Rss:
+        return RssIcon;
+      case UIIcon::Wikipedia:
+        return WikipediaIcon;
+      case UIIcon::Minesweeper:
+        return MinesweeperIcon;
+      case UIIcon::Chess:
+        return ChessIcon;
+      case UIIcon::Dice:
+        return DiceIcon;
       default:
         return nullptr;
     }
@@ -504,10 +564,36 @@ void LyraTheme::drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) c
 void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {
-  for (int i = 0; i < buttonCount; ++i) {
-    int tileWidth = rect.width - LyraMetrics::values.contentSidePadding * 2;
+  const int rowHeight = LyraMetrics::values.menuRowHeight + LyraMetrics::values.menuSpacing;
+  const int pageItems = std::min(6, std::max(1, rect.height / rowHeight));
+  const int safeSelectedIndex = std::max(0, selectedIndex);
+  int pageStartIndex = safeSelectedIndex - (pageItems - 1) / 2;
+  if (pageStartIndex > buttonCount - pageItems) {
+    pageStartIndex = buttonCount - pageItems;
+  }
+  if (pageStartIndex < 0) {
+    pageStartIndex = 0;
+  }
+
+  if (buttonCount > pageItems) {
+    const int scrollAreaHeight = rect.height;
+
+    // Draw scroll bar
+    const int scrollBarHeight = std::max(10, (scrollAreaHeight * pageItems) / buttonCount);
+    const int totalScrollRange = buttonCount - pageItems;
+    const int scrollBarY = rect.y + ((scrollAreaHeight - scrollBarHeight) * pageStartIndex) / totalScrollRange;
+    const int scrollBarX = rect.x + rect.width - LyraMetrics::values.scrollBarRightOffset;
+    renderer.drawLine(scrollBarX, rect.y, scrollBarX, rect.y + scrollAreaHeight, true);
+    renderer.fillRect(scrollBarX - LyraMetrics::values.scrollBarWidth, scrollBarY, LyraMetrics::values.scrollBarWidth,
+                      scrollBarHeight, true);
+  }
+
+  int contentWidth = rect.width - (buttonCount > pageItems ? (LyraMetrics::values.scrollBarWidth + LyraMetrics::values.scrollBarRightOffset + 4) : 0);
+
+  for (int i = pageStartIndex; i < buttonCount && i < pageStartIndex + pageItems; ++i) {
+    int tileWidth = contentWidth - LyraMetrics::values.contentSidePadding * 2;
     Rect tileRect = Rect{rect.x + LyraMetrics::values.contentSidePadding,
-                         rect.y + i * (LyraMetrics::values.menuRowHeight + LyraMetrics::values.menuSpacing), tileWidth,
+                         rect.y + (i - pageStartIndex) * rowHeight, tileWidth,
                          LyraMetrics::values.menuRowHeight};
 
     const bool selected = selectedIndex == i;
@@ -525,8 +611,26 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
     if (rowIcon != nullptr) {
       UIIcon icon = rowIcon(i);
       const uint8_t* iconBitmap = iconForName(icon, mainMenuIconSize);
+      int drawIconSize = mainMenuIconSize;
+      int iconYOffset = 3;
+      int iconXOffset = 0;
+      if (iconBitmap == nullptr) {
+        // Try fallback to 24px icon
+        iconBitmap = iconForName(icon, 24);
+        if (iconBitmap != nullptr) {
+          drawIconSize = 24;
+          iconYOffset = 3 + (mainMenuIconSize - 24) / 2;
+          iconXOffset = (mainMenuIconSize - 24) / 2;
+        } else {
+          // Absolute fallback
+          iconBitmap = File24Icon;
+          drawIconSize = 24;
+          iconYOffset = 3 + (mainMenuIconSize - 24) / 2;
+          iconXOffset = (mainMenuIconSize - 24) / 2;
+        }
+      }
       if (iconBitmap != nullptr) {
-        renderer.drawIcon(iconBitmap, textX, textY + 3, mainMenuIconSize, mainMenuIconSize);
+        renderer.drawIcon(iconBitmap, textX + iconXOffset, textY + iconYOffset, drawIconSize, drawIconSize);
         textX += mainMenuIconSize + hPaddingInSelection + 2;
       }
     }

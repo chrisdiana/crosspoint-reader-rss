@@ -5,6 +5,7 @@
 #include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <Logging.h>
+#include <WiFi.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -97,15 +98,79 @@ void BaseTheme::drawBatteryRight(const GfxRenderer& renderer, Rect rect, const b
   const uint16_t percentage = powerManager.getBatteryPercentage();
   const int y = rect.y + 6;
 
+  int batteryLeftX = rect.x;
   if (showPercentage) {
     const auto percentageText = std::to_string(percentage) + "%";
     const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, percentageText.c_str());
     renderer.drawText(SMALL_FONT_ID, rect.x - textWidth - batteryPercentSpacing, rect.y, percentageText.c_str());
+    batteryLeftX -= (textWidth + batteryPercentSpacing);
   }
 
   const Rect iconRect{rect.x, y, rect.width, rect.height};
   drawBatteryOutline(renderer, rect.x, y, rect.width, rect.height);
   fillBatteryIcon(renderer, iconRect, percentage);
+
+  // WiFi Indicator
+  const int wifiX = batteryLeftX - 12 - 8;
+  const int wifiY = y;
+
+  // Clear WiFi indicator bounding rect to avoid ghosting
+  renderer.fillRect(wifiX - 1, wifiY - 1, 14, 14, false);
+
+  const bool wifiEnabled = (WiFi.getMode() != WIFI_OFF);
+  const bool wifiConnected = (wifiEnabled && WiFi.status() == WL_CONNECTED);
+
+  if (wifiEnabled) {
+    // Dot at bottom center
+    renderer.fillRect(wifiX + 5, wifiY + 10, 2, 2, true);
+
+    // Inner Arc
+    if (wifiConnected) {
+      renderer.drawPixel(wifiX + 3, wifiY + 8, true);
+      renderer.drawPixel(wifiX + 4, wifiY + 7, true);
+      renderer.drawPixel(wifiX + 5, wifiY + 6, true);
+      renderer.drawPixel(wifiX + 6, wifiY + 6, true);
+      renderer.drawPixel(wifiX + 7, wifiY + 7, true);
+      renderer.drawPixel(wifiX + 8, wifiY + 8, true);
+    } else {
+      // Outline/Dotted inner arc
+      renderer.drawPixel(wifiX + 3, wifiY + 8, true);
+      renderer.drawPixel(wifiX + 5, wifiY + 6, true);
+      renderer.drawPixel(wifiX + 6, wifiY + 6, true);
+      renderer.drawPixel(wifiX + 8, wifiY + 8, true);
+    }
+
+    // Outer Arc
+    if (wifiConnected) {
+      renderer.drawPixel(wifiX + 0, wifiY + 5, true);
+      renderer.drawPixel(wifiX + 1, wifiY + 4, true);
+      renderer.drawPixel(wifiX + 2, wifiY + 3, true);
+      renderer.drawPixel(wifiX + 3, wifiY + 2, true);
+      renderer.drawPixel(wifiX + 4, wifiY + 2, true);
+      renderer.drawPixel(wifiX + 5, wifiY + 1, true);
+      renderer.drawPixel(wifiX + 6, wifiY + 1, true);
+      renderer.drawPixel(wifiX + 7, wifiY + 2, true);
+      renderer.drawPixel(wifiX + 8, wifiY + 2, true);
+      renderer.drawPixel(wifiX + 9, wifiY + 3, true);
+      renderer.drawPixel(wifiX + 10, wifiY + 4, true);
+      renderer.drawPixel(wifiX + 11, wifiY + 5, true);
+    } else {
+      // Outline/Dotted outer arc
+      renderer.drawPixel(wifiX + 0, wifiY + 5, true);
+      renderer.drawPixel(wifiX + 3, wifiY + 2, true);
+      renderer.drawPixel(wifiX + 8, wifiY + 2, true);
+      renderer.drawPixel(wifiX + 11, wifiY + 5, true);
+    }
+  } else {
+    // Disabled state: dotted outline with a slash
+    renderer.drawPixel(wifiX + 0, wifiY + 5, true);
+    renderer.drawPixel(wifiX + 2, wifiY + 3, true);
+    renderer.drawPixel(wifiX + 5, wifiY + 1, true);
+    renderer.drawPixel(wifiX + 6, wifiY + 1, true);
+    renderer.drawPixel(wifiX + 9, wifiY + 3, true);
+    renderer.drawPixel(wifiX + 11, wifiY + 5, true);
+    renderer.drawLine(wifiX + 1, wifiY + 1, wifiX + 10, wifiY + 10, true);
+  }
 }
 
 void BaseTheme::drawProgressBar(const GfxRenderer& renderer, Rect rect, const size_t current,
@@ -326,7 +391,7 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
 
 void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle) const {
   // Hide last battery draw
-  constexpr int maxBatteryWidth = 80;
+  constexpr int maxBatteryWidth = 100;
   renderer.fillRect(rect.x + rect.width - maxBatteryWidth, rect.y + 5, maxBatteryWidth,
                     BaseMetrics::values.batteryHeight + 10, false);
 
@@ -638,24 +703,51 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {
-  for (int i = 0; i < buttonCount; ++i) {
+  const int rowHeight = BaseMetrics::values.menuRowHeight + BaseMetrics::values.menuSpacing;
+  const int pageItems = std::min(6, std::max(1, rect.height / rowHeight));
+  const int safeSelectedIndex = std::max(0, selectedIndex);
+  int pageStartIndex = safeSelectedIndex - (pageItems - 1) / 2;
+  if (pageStartIndex > buttonCount - pageItems) {
+    pageStartIndex = buttonCount - pageItems;
+  }
+  if (pageStartIndex < 0) {
+    pageStartIndex = 0;
+  }
+
+  if (buttonCount > pageItems) {
+    const int scrollAreaHeight = rect.height;
+
+    // Draw scroll bar
+    const int scrollBarHeight = std::max(10, (scrollAreaHeight * pageItems) / buttonCount);
+    const int totalScrollRange = buttonCount - pageItems;
+    const int scrollBarY = rect.y + ((scrollAreaHeight - scrollBarHeight) * pageStartIndex) / totalScrollRange;
+    const int scrollBarX = rect.x + rect.width - BaseMetrics::values.scrollBarRightOffset;
+    renderer.drawLine(scrollBarX, rect.y, scrollBarX, rect.y + scrollAreaHeight, true);
+    renderer.fillRect(scrollBarX - BaseMetrics::values.scrollBarWidth, scrollBarY, BaseMetrics::values.scrollBarWidth,
+                      scrollBarHeight, true);
+  }
+
+  int contentWidth = rect.width - (buttonCount > pageItems ? (BaseMetrics::values.scrollBarWidth + BaseMetrics::values.scrollBarRightOffset + 4) : 0);
+
+  for (int i = pageStartIndex; i < buttonCount && i < pageStartIndex + pageItems; ++i) {
     const int tileY = BaseMetrics::values.verticalSpacing + rect.y +
-                      static_cast<int>(i) * (BaseMetrics::values.menuRowHeight + BaseMetrics::values.menuSpacing);
+                      static_cast<int>(i - pageStartIndex) * rowHeight;
 
     const bool selected = selectedIndex == i;
+    const int tileWidth = contentWidth - BaseMetrics::values.contentSidePadding * 2;
 
     if (selected) {
       renderer.fillRect(rect.x + BaseMetrics::values.contentSidePadding, tileY,
-                        rect.width - BaseMetrics::values.contentSidePadding * 2, BaseMetrics::values.menuRowHeight);
+                        tileWidth, BaseMetrics::values.menuRowHeight);
     } else {
       renderer.drawRect(rect.x + BaseMetrics::values.contentSidePadding, tileY,
-                        rect.width - BaseMetrics::values.contentSidePadding * 2, BaseMetrics::values.menuRowHeight);
+                        tileWidth, BaseMetrics::values.menuRowHeight);
     }
 
     std::string labelStr = buttonLabel(i);
     const char* label = labelStr.c_str();
     const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, label);
-    const int textX = rect.x + (rect.width - textWidth) / 2;
+    const int textX = rect.x + BaseMetrics::values.contentSidePadding + (tileWidth - textWidth) / 2;
     const int lineHeight = renderer.getLineHeight(UI_10_FONT_ID);
     const int textY =
         tileY + (BaseMetrics::values.menuRowHeight - lineHeight) / 2;  // vertically centered assuming y is top of text

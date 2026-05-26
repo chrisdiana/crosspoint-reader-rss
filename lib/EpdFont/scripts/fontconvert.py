@@ -23,6 +23,7 @@ parser.add_argument("--additional-intervals", dest="additional_intervals", actio
 parser.add_argument("--compress", dest="compress", action="store_true", help="Compress glyph bitmaps using DEFLATE with group-based compression.")
 parser.add_argument("--force-autohint", dest="force_autohint", action="store_true", help="Force FreeType auto-hinter instead of native font hinting. Improves stem width consistency for fonts with weak or no native TrueType hints.")
 parser.add_argument("--pnum", dest="pnum", action="store_true", help="Use proportional numerals (pnum OpenType feature) instead of default tabular figures. Reduces visual gaps between digits in running prose.")
+parser.add_argument("--only-additional", dest="only_additional", action="store_true", help="Only export the additional intervals, excluding defaults.")
 args = parser.parse_args()
 
 import freetype
@@ -127,6 +128,10 @@ intervals = [
     # (0xFE30, 0xFE4F),
     # # CJK Compatibility Ideographs
     # (0xF900, 0xFAFF),
+    ### Chess pieces ###
+    (0x2654, 0x265F),
+    ### Die faces ###
+    (0x2680, 0x2685),
     ### Alphabetic Presentation Forms (Latin ligatures) ###
     # ff, fi, fl, ffi, ffl, long-st, st
     (0xFB00, 0xFB06),
@@ -134,6 +139,9 @@ intervals = [
     # Replacement Character
     (0xFFFD, 0xFFFD),
 ]
+
+if args.only_additional:
+    intervals = []
 
 add_ints = []
 if args.additional_intervals:

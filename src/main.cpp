@@ -94,6 +94,10 @@ EpdFont notosans18BoldItalicFont(&notosans_18_bolditalic);
 EpdFontFamily notosans18FontFamily(&notosans18RegularFont, &notosans18BoldFont, &notosans18ItalicFont,
                                    &notosans18BoldItalicFont);
 
+EpdFont notosans48EmojiRegularFont(&notosans_48_emoji);
+EpdFontFamily notosans48EmojiFontFamily(&notosans48EmojiRegularFont, nullptr, nullptr, nullptr);
+
+
 EpdFont opendyslexic8RegularFont(&opendyslexic_8_regular);
 EpdFont opendyslexic8BoldFont(&opendyslexic_8_bold);
 EpdFont opendyslexic8ItalicFont(&opendyslexic_8_italic);
@@ -323,6 +327,8 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(UI_10_FONT_ID, ui10FontFamily);
   renderer.insertFont(UI_12_FONT_ID, ui12FontFamily);
   renderer.insertFont(SMALL_FONT_ID, smallFontFamily);
+  renderer.insertFont(NOTOSANS_48_EMOJI_FONT_ID, notosans48EmojiFontFamily);
+
 
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);

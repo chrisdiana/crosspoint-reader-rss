@@ -130,46 +130,55 @@ void SettingsActivity::loop() {
     return;
   }
 
-  // Handle navigation
-  buttonNavigator.onNextRelease([this] {
+  // Handle tab switching via Left/Right buttons
+  if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    selectedCategoryIndex = ButtonNavigator::previousIndex(selectedCategoryIndex, categoryCount);
+    selectedSettingIndex = 0;
+    hasChangedCategory = true;
+    requestUpdate();
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+    selectedCategoryIndex = ButtonNavigator::nextIndex(selectedCategoryIndex, categoryCount);
+    selectedSettingIndex = 0;
+    hasChangedCategory = true;
+    requestUpdate();
+  }
+
+  // Handle list navigation via Up/Down buttons
+  if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+    selectedSettingIndex = ButtonNavigator::nextIndex(selectedSettingIndex, settingsCount + 1);
+    requestUpdate();
+  }
+  if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
+    selectedSettingIndex = ButtonNavigator::previousIndex(selectedSettingIndex, settingsCount + 1);
+    requestUpdate();
+  }
+
+  // Handle continuous holding
+  buttonNavigator.onContinuous({MappedInputManager::Button::Down}, [this] {
     selectedSettingIndex = ButtonNavigator::nextIndex(selectedSettingIndex, settingsCount + 1);
     requestUpdate();
   });
-
-  buttonNavigator.onPreviousRelease([this] {
+  buttonNavigator.onContinuous({MappedInputManager::Button::Up}, [this] {
     selectedSettingIndex = ButtonNavigator::previousIndex(selectedSettingIndex, settingsCount + 1);
     requestUpdate();
   });
-
-  buttonNavigator.onNextContinuous([this, &hasChangedCategory] {
+  buttonNavigator.onContinuous({MappedInputManager::Button::Left}, [this, &hasChangedCategory] {
+    selectedCategoryIndex = ButtonNavigator::previousIndex(selectedCategoryIndex, categoryCount);
+    selectedSettingIndex = 0;
     hasChangedCategory = true;
-    selectedCategoryIndex = ButtonNavigator::nextIndex(selectedCategoryIndex, categoryCount);
     requestUpdate();
   });
-
-  buttonNavigator.onPreviousContinuous([this, &hasChangedCategory] {
+  buttonNavigator.onContinuous({MappedInputManager::Button::Right}, [this, &hasChangedCategory] {
+    selectedCategoryIndex = ButtonNavigator::nextIndex(selectedCategoryIndex, categoryCount);
+    selectedSettingIndex = 0;
     hasChangedCategory = true;
-    selectedCategoryIndex = ButtonNavigator::previousIndex(selectedCategoryIndex, categoryCount);
     requestUpdate();
   });
 
   if (hasChangedCategory) {
     selectedSettingIndex = (selectedSettingIndex == 0) ? 0 : 1;
-    switch (selectedCategoryIndex) {
-      case 0:
-        currentSettings = &displaySettings;
-        break;
-      case 1:
-        currentSettings = &readerSettings;
-        break;
-      case 2:
-        currentSettings = &controlsSettings;
-        break;
-      case 3:
-        currentSettings = &systemSettings;
-        break;
-    }
-    settingsCount = static_cast<int>(currentSettings->size());
+    rebuildSettingsLists();
   }
 }
 

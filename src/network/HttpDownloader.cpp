@@ -6,10 +6,12 @@
 #include <base64.h>
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
+#include "activities/RenderLock.h"
 
 #include <cstring>
 #include <functional>
 #include <string>
+
 
 namespace {
 // RX holds the response headers. 4096 fits real OPDS servers; GitHub's release
@@ -176,31 +178,45 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
                                                              const std::string& username, const std::string& password) {
   LOG_DBG("HTTP", "Downloading: %s -> %s", url.c_str(), destPath.c_str());
 
-  if (Storage.exists(destPath.c_str())) {
-    Storage.remove(destPath.c_str());
+  {
+    RenderLock lock;
+    if (Storage.exists(destPath.c_str())) {
+      Storage.remove(destPath.c_str());
+    }
   }
   HalFile file;
-  if (!Storage.openFileForWrite("HTTP", destPath.c_str(), file)) {
-    LOG_ERR("HTTP", "Failed to open file for writing");
-    return FILE_ERROR;
+  {
+    RenderLock lock;
+    if (!Storage.openFileForWrite("HTTP", destPath.c_str(), file)) {
+      LOG_ERR("HTTP", "Failed to open file for writing");
+      return FILE_ERROR;
+    }
   }
 
   Sink sink;
   sink.progress = std::move(progress);
   sink.cancelFlag = cancelFlag;
-  sink.write = [&file](const uint8_t* data, size_t len) { return file.write(data, len) == len; };
+  sink.write = [&file](const uint8_t* data, size_t len) {
+    RenderLock lock;
+    return file.write(data, len) == len;
+  };
 
   const DownloadError result = runGet(url, username, password, sink);
   // Close before any remove() on the same path; DESTRUCTOR_CLOSES_FILE would
   // otherwise close only after the remove.
-  file.close();
+  {
+    RenderLock lock;
+    file.close();
+  }
 
   if (result != OK) {
+    RenderLock lock;
     Storage.remove(destPath.c_str());
     return result;
   }
   if (sink.downloaded == 0) {
     LOG_ERR("HTTP", "no data received");
+    RenderLock lock;
     Storage.remove(destPath.c_str());
     return HTTP_ERROR;
   }

@@ -19,6 +19,8 @@
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "apps/AppRegistry.h"
+
 
 int HomeActivity::getMenuItemCount() const {
   int count = 4;  // File Browser, Recents, File transfer, Settings
@@ -28,6 +30,7 @@ int HomeActivity::getMenuItemCount() const {
   if (hasOpdsServers) {
     count++;
   }
+  count += AppRegistry::getInstance().getApps().size();
   return count;
 }
 
@@ -184,24 +187,34 @@ void HomeActivity::loop() {
       onSelectBook(recentBooks[selectorIndex].path);
     } else {
       const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
-      switch (indexToMenuItem(menuIndex, hasOpdsServers)) {
-        case HomeMenuItem::FILE_BROWSER:
-          onFileBrowserOpen();
-          break;
-        case HomeMenuItem::RECENTS:
-          onRecentsOpen();
-          break;
-        case HomeMenuItem::OPDS_BROWSER:
-          onOpdsBrowserOpen();
-          break;
-        case HomeMenuItem::FILE_TRANSFER:
-          onFileTransferOpen();
-          break;
-        case HomeMenuItem::SETTINGS_MENU:
-          onSettingsOpen();
-          break;
-        default:
-          break;
+      const int standardCount = 4 + (hasOpdsServers ? 1 : 0);
+      if (menuIndex < standardCount) {
+        switch (indexToMenuItem(menuIndex, hasOpdsServers)) {
+          case HomeMenuItem::FILE_BROWSER:
+            onFileBrowserOpen();
+            break;
+          case HomeMenuItem::RECENTS:
+            onRecentsOpen();
+            break;
+          case HomeMenuItem::OPDS_BROWSER:
+            onOpdsBrowserOpen();
+            break;
+          case HomeMenuItem::FILE_TRANSFER:
+            onFileTransferOpen();
+            break;
+          case HomeMenuItem::SETTINGS_MENU:
+            onSettingsOpen();
+            break;
+          default:
+            break;
+        }
+      } else {
+        const int appIndex = menuIndex - standardCount;
+        const auto& apps = AppRegistry::getInstance().getApps();
+        if (appIndex >= 0 && appIndex < static_cast<int>(apps.size())) {
+          auto appActivity = apps[appIndex]->createActivity(renderer, mappedInput);
+          activityManager.pushActivity(std::move(appActivity));
+        }
       }
     }
   }
@@ -231,7 +244,7 @@ void HomeActivity::render(RenderLock&&) {
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
   // Build menu items dynamically
-  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
+  std::vector<std::string> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
                                         tr(STR_SETTINGS_TITLE)};
   std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, Settings};
 
@@ -246,6 +259,13 @@ void HomeActivity::render(RenderLock&&) {
     menuIcons.insert(menuIcons.begin(), Book);
   }
 
+  // Append apps from AppRegistry
+  const auto& apps = AppRegistry::getInstance().getApps();
+  for (const auto& app : apps) {
+    menuItems.push_back(app->getName());
+    menuIcons.push_back(app->getIcon());
+  }
+
   GUI.drawButtonMenu(
       renderer,
       Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
@@ -253,7 +273,7 @@ void HomeActivity::render(RenderLock&&) {
                          metrics.homeMenuTopOffset + metrics.buttonHintsHeight)},
       static_cast<int>(menuItems.size()),
       metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
-      [&menuItems](int index) { return std::string(menuItems[index]); },
+      [&menuItems](int index) { return menuItems[index]; },
       [&menuIcons](int index) { return menuIcons[index]; });
 
   const auto labels = mappedInput.mapLabels("", tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
