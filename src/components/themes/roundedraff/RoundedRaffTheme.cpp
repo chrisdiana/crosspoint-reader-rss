@@ -80,6 +80,8 @@ void RoundedRaffTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const 
                    Rect{batteryIconX, rect.y + 14, RoundedRaffMetrics::values.batteryWidth,
                         RoundedRaffMetrics::values.batteryHeight},
                    showBatteryPercentage);
+
+  drawClock(renderer, rect);
 }
 
 void RoundedRaffTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
@@ -193,14 +195,15 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
 
 void RoundedRaffTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                       const std::function<std::string(int index)>& buttonLabel,
-                                      const std::function<UIIcon(int index)>& rowIcon) const {
+                                      const std::function<UIIcon(int index)>& rowIcon,
+                                      int maxPageItems) const {
   (void)rowIcon;
   const int sidePadding = RoundedRaffMetrics::values.contentSidePadding;
   const int rowX = rect.x + sidePadding;
   const int rowHeight = renderer.getLineHeight(kTitleFontId) + 20;  // 10px top + 10px bottom
   const int rowGap = kSelectableRowGap;
   const int rowStep = rowHeight + rowGap;
-  const int pageItems = std::min(6, std::max(1, rect.height / rowStep));
+  const int pageItems = std::min(maxPageItems, std::max(1, rect.height / rowStep));
   const int safeSelectedIndex = std::max(0, selectedIndex);
   int pageStartIndex = safeSelectedIndex - (pageItems - 1) / 2;
   if (pageStartIndex > buttonCount - pageItems) {

@@ -33,8 +33,6 @@ class WikipediaActivity final : public Activity {
   std::string errorMessage;
 
   void loadOfflineArticlesList();
-  void loadOfflineArticle(const std::string& title);
-  void saveArticleText(const std::string& title, const std::string& text);
   void ensureWifiConnected();
   void doSearch();
   void doFetchArticle();

@@ -20,6 +20,9 @@ class ConfirmationActivity : public Activity {
   int startY = 0;
   int lineHeight = 0;
 
+  bool ignoreNextLeftRelease = false;
+  bool ignoreNextRightRelease = false;
+
  public:
   ConfirmationActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& heading,
                        const std::string& body);

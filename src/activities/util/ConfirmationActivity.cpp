@@ -12,6 +12,9 @@ ConfirmationActivity::ConfirmationActivity(GfxRenderer& renderer, MappedInputMan
 void ConfirmationActivity::onEnter() {
   Activity::onEnter();
 
+  ignoreNextLeftRelease = mappedInput.isPressed(MappedInputManager::Button::Left);
+  ignoreNextRightRelease = mappedInput.isPressed(MappedInputManager::Button::Right);
+
   lineHeight = renderer.getLineHeight(fontId);
   const int maxWidth = renderer.getScreenWidth() - (margin * 2);
 
@@ -57,6 +60,10 @@ void ConfirmationActivity::render(RenderLock&& lock) {
 
 void ConfirmationActivity::loop() {
   if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+    if (ignoreNextRightRelease) {
+      ignoreNextRightRelease = false;
+      return;
+    }
     ActivityResult res;
     res.isCancelled = false;
     setResult(std::move(res));
@@ -65,10 +72,22 @@ void ConfirmationActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    if (ignoreNextLeftRelease) {
+      ignoreNextLeftRelease = false;
+      return;
+    }
     ActivityResult res;
     res.isCancelled = true;
     setResult(std::move(res));
     finish();
     return;
+  }
+
+  // Safety cleanup: if the buttons are physically released, clear ignore flags
+  if (ignoreNextLeftRelease && !mappedInput.isPressed(MappedInputManager::Button::Left)) {
+    ignoreNextLeftRelease = false;
+  }
+  if (ignoreNextRightRelease && !mappedInput.isPressed(MappedInputManager::Button::Right)) {
+    ignoreNextRightRelease = false;
   }
 }

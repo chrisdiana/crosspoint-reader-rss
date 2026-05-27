@@ -118,7 +118,8 @@ UIIcon UITheme::getFileIcon(const std::string& filename) {
   if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename)) {
     return Book;
   }
-  if (FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename)) {
+  if (FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename) ||
+      FsHelpers::checkFileExtension(filename, ".html") || FsHelpers::checkFileExtension(filename, ".htm")) {
     return Text;
   }
   if (FsHelpers::hasBmpExtension(filename)) {

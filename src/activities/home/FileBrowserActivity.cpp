@@ -54,7 +54,9 @@ void FileBrowserActivity::loadFiles() {
         }
       } else if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
                  FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename) ||
-                 FsHelpers::hasBmpExtension(filename)) {
+                 FsHelpers::hasBmpExtension(filename) ||
+                 FsHelpers::checkFileExtension(filename, ".html") ||
+                 FsHelpers::checkFileExtension(filename, ".htm")) {
         files.emplace_back(filename);
       }
     }
@@ -206,6 +208,51 @@ void FileBrowserActivity::loop() {
   const int pathReserved = renderer.getLineHeight(SMALL_FONT_ID) + UITheme::getInstance().getMetrics().verticalSpacing;
   const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false, pathReserved);
 
+  if (mode == Mode::Books && !files.empty()) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+      if (lockNextLeftRightRelease) {
+        lockNextLeftRightRelease = false;
+        return;
+      }
+      lockNextLeftRightRelease = true;
+
+      const std::string& entry = files[selectorIndex];
+      std::string cleanBasePath = basepath;
+      if (cleanBasePath.back() != '/') cleanBasePath += "/";
+      const std::string fullPath = cleanBasePath + entry;
+
+      auto handler = [this, fullPath](const ActivityResult& res) {
+        if (!res.isCancelled) {
+          LOG_DBG("FileBrowser", "Attempting to delete: %s", fullPath.c_str());
+          if (removeDirFile(fullPath)) {
+            LOG_DBG("FileBrowser", "Deleted successfully");
+            loadFiles();
+            if (files.empty()) {
+              selectorIndex = 0;
+            } else if (selectorIndex >= files.size()) {
+              selectorIndex = files.size() - 1;
+            }
+            requestUpdate(true);
+          } else {
+            LOG_ERR("FileBrowser", "Failed to delete: %s", fullPath.c_str());
+          }
+        } else {
+          LOG_DBG("FileBrowser", "Delete cancelled by user");
+        }
+      };
+
+      std::string heading = tr(STR_DELETE) + std::string("? ");
+      startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading, entry), handler);
+      return;
+    }
+  }
+
+  if (lockNextLeftRightRelease &&
+      !mappedInput.isPressed(MappedInputManager::Button::Left) &&
+      !mappedInput.isPressed(MappedInputManager::Button::Right)) {
+    lockNextLeftRightRelease = false;
+  }
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     if (lockNextConfirmRelease) {
       lockNextConfirmRelease = false;
@@ -227,50 +274,16 @@ void FileBrowserActivity::loop() {
       return;
     }
 
-    if (mode == Mode::Books && mappedInput.getHeldTime() >= GO_HOME_MS) {
-      // --- LONG PRESS ACTION: DELETE FILE OR DIRECTORY ---
-      std::string cleanBasePath = basepath;
-      if (cleanBasePath.back() != '/') cleanBasePath += "/";
-      const std::string fullPath = cleanBasePath + entry;
+    // --- SHORT PRESS ACTION: OPEN/NAVIGATE ---
+    if (basepath.back() != '/') basepath += "/";
 
-      auto handler = [this, fullPath](const ActivityResult& res) {
-        if (!res.isCancelled) {
-          LOG_DBG("FileBrowser", "Attempting to delete: %s", fullPath.c_str());
-          if (removeDirFile(fullPath)) {
-            LOG_DBG("FileBrowser", "Deleted successfully");
-            loadFiles();
-            if (files.empty()) {
-              selectorIndex = 0;
-            } else if (selectorIndex >= files.size()) {
-              // Move selection to the new "last" item
-              selectorIndex = files.size() - 1;
-            }
-
-            requestUpdate(true);
-          } else {
-            LOG_ERR("FileBrowser", "Failed to delete: %s", fullPath.c_str());
-          }
-        } else {
-          LOG_DBG("FileBrowser", "Delete cancelled by user");
-        }
-      };
-
-      std::string heading = tr(STR_DELETE) + std::string("? ");
-
-      startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading, entry), handler);
-      return;
+    if (isDirectory) {
+      basepath += entry.substr(0, entry.length() - 1);
+      loadFiles();
+      selectorIndex = 0;
+      requestUpdate();
     } else {
-      // --- SHORT PRESS ACTION: OPEN/NAVIGATE ---
-      if (basepath.back() != '/') basepath += "/";
-
-      if (isDirectory) {
-        basepath += entry.substr(0, entry.length() - 1);
-        loadFiles();
-        selectorIndex = 0;
-        requestUpdate();
-      } else {
-        onSelectBook(basepath + entry);
-      }
+      onSelectBook(basepath + entry);
     }
     return;
   }
@@ -303,25 +316,27 @@ void FileBrowserActivity::loop() {
   }
 
   int listSize = static_cast<int>(files.size());
-  buttonNavigator.onNextRelease([this, listSize] {
+  buttonNavigator.onRelease({MappedInputManager::Button::Down}, [this, listSize] {
     selectorIndex = ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize);
     requestUpdate();
   });
 
-  buttonNavigator.onPreviousRelease([this, listSize] {
+  buttonNavigator.onRelease({MappedInputManager::Button::Up}, [this, listSize] {
     selectorIndex = ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize);
     requestUpdate();
   });
 
-  buttonNavigator.onNextContinuous([this, listSize, pageItems] {
-    selectorIndex = ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
-    requestUpdate();
-  });
+  if (mode != Mode::Books) {
+    buttonNavigator.onContinuous({MappedInputManager::Button::Down}, [this, listSize, pageItems] {
+      selectorIndex = ButtonNavigator::nextPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
+      requestUpdate();
+    });
 
-  buttonNavigator.onPreviousContinuous([this, listSize, pageItems] {
-    selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
-    requestUpdate();
-  });
+    buttonNavigator.onContinuous({MappedInputManager::Button::Up}, [this, listSize, pageItems] {
+      selectorIndex = ButtonNavigator::previousPageIndex(static_cast<int>(selectorIndex), listSize, pageItems);
+      requestUpdate();
+    });
+  }
 }
 
 std::string getFileName(std::string filename) {
@@ -405,9 +420,24 @@ void FileBrowserActivity::render(RenderLock&&) {
   // In PickFirmware mode, Confirm on a .bin returns the path to the caller (not "open"); show
   // STR_SELECT instead. Directories in the same picker still descend, so keep STR_OPEN there.
   const bool selectingFirmwareFile = mode == Mode::PickFirmware && !files.empty() && files[selectorIndex].back() != '/';
-  const char* confirmLabel = files.empty() ? "" : (selectingFirmwareFile ? tr(STR_SELECT) : tr(STR_OPEN));
-  const auto labels = mappedInput.mapLabels(backLabel, confirmLabel, files.empty() ? "" : tr(STR_DIR_UP),
-                                            files.empty() ? "" : tr(STR_DIR_DOWN));
+  
+  std::string confirmLabelStr;
+  if (!files.empty()) {
+    if (selectingFirmwareFile) {
+      confirmLabelStr = tr(STR_SELECT);
+    } else {
+      confirmLabelStr = tr(STR_OPEN);
+    }
+  }
+  const char* confirmLabel = confirmLabelStr.empty() ? "" : confirmLabelStr.c_str();
+
+  const char* previousLabel = "";
+  const char* nextLabel = "";
+  if (mode == Mode::Books && !files.empty()) {
+    nextLabel = tr(STR_DELETE);
+  }
+
+  const auto labels = mappedInput.mapLabels(backLabel, confirmLabel, previousLabel, nextLabel);
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

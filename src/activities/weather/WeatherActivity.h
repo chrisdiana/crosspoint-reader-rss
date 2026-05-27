@@ -25,10 +25,18 @@ class WeatherActivity final : public Activity {
   std::string errorMessage;
   bool shouldFetch = false;
 
-  void handleConfirm();
+  double fetchedTemp = 0.0;
+  double fetchedWindspeed = 0.0;
+  int fetchedWeatherCode = 0;
+  std::string fetchedTimeStr;
+  bool backgroundFetchSuccess = false;
+  volatile bool pendingUpdateWeather = false;
+  void* fetchTaskHandle = nullptr;
+
   void performFetch();
 
  public:
+  void runBackgroundFetch();
   explicit WeatherActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : Activity("Weather", renderer, mappedInput) {}
 

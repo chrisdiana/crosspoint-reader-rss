@@ -35,9 +35,7 @@ class TxtReaderActivity final : public Activity {
 
   void initializeReader();
   bool loadPageAtOffset(size_t offset, std::vector<std::string>& outLines, size_t& nextOffset);
-  void buildPageIndex();
-  bool loadPageIndexCache();
-  void savePageIndexCache() const;
+  void wrapAndPushHtmlLine(const std::string& line, char marker, EpdFontFamily::Style style, int indent, std::vector<std::string>& outLines);
   void saveProgress() const;
   void loadProgress();
 

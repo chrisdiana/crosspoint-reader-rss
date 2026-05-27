@@ -18,7 +18,9 @@ bool ReaderActivity::isXtcFile(const std::string& path) { return FsHelpers::hasX
 
 bool ReaderActivity::isTxtFile(const std::string& path) {
   return FsHelpers::hasTxtExtension(path) ||
-         FsHelpers::hasMarkdownExtension(path);  // Treat .md as txt files (until we have a markdown reader)
+         FsHelpers::hasMarkdownExtension(path) ||
+         FsHelpers::checkFileExtension(path, ".html") ||
+         FsHelpers::checkFileExtension(path, ".htm");
 }
 
 bool ReaderActivity::isBmpFile(const std::string& path) { return FsHelpers::hasBmpExtension(path); }

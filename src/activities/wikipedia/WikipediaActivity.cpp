@@ -1,11 +1,12 @@
 #include "WikipediaActivity.h"
 #include "MappedInputManager.h"
 #include "activities/ActivityManager.h"
-#include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "activities/util/WifiConnectHelper.h"
 #include "activities/util/DownloadWatchdog.h"
+#include "activities/reader/TxtReaderActivity.h"
+#include <Txt.h>
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <sstream>
 
 namespace {
 std::string sanitizeFilename(const std::string &title) {
@@ -28,6 +30,95 @@ std::string sanitizeFilename(const std::string &title) {
     }
   }
   return filename;
+}
+
+std::string cleanUnicode(const std::string& input) {
+  std::string output = "";
+  output.reserve(input.size());
+  for (size_t i = 0; i < input.size(); ) {
+    unsigned char c = input[i];
+    if (c < 0x80) {
+      output += c;
+      i++;
+    } else if ((c & 0xE0) == 0xC0) { // 2 bytes
+      if (i + 1 < input.size()) {
+        unsigned char c2 = input[i+1];
+        uint16_t codepoint = ((c & 0x1F) << 6) | (c2 & 0x3F);
+        if (codepoint == 0x00A0) { // Non-breaking space
+          output += ' ';
+        } else {
+          output += input.substr(i, 2);
+        }
+      }
+      i += 2;
+    } else if ((c & 0xF0) == 0xE0) { // 3 bytes
+      if (i + 2 < input.size()) {
+        unsigned char c2 = input[i+1];
+        unsigned char c3 = input[i+2];
+        uint16_t codepoint = ((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+        if (codepoint == 0x2018 || codepoint == 0x2019) { // Single quotes
+          output += '\'';
+        } else if (codepoint == 0x201C || codepoint == 0x201D) { // Double quotes
+          output += '"';
+        } else if (codepoint == 0x2013 || codepoint == 0x2014) { // En/em dash
+          output += '-';
+        } else if (codepoint == 0x200B) { // Zero-width space
+          // skip it
+        } else {
+          output += input.substr(i, 3);
+        }
+      }
+      i += 3;
+    } else if ((c & 0xF8) == 0xF0) { // 4 bytes
+      if (i + 3 < input.size()) {
+        output += input.substr(i, 4);
+      }
+      i += 4;
+    } else {
+      i++;
+    }
+  }
+  return output;
+}
+
+std::string convertToMarkdown(const std::string &title, const std::string &text) {
+  std::string md = "# " + title + "\n\n";
+  std::string line;
+  std::istringstream stream(text);
+  while (std::getline(stream, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    size_t startEquals = 0;
+    while (startEquals < line.size() && line[startEquals] == '=') {
+      startEquals++;
+    }
+    size_t endEquals = 0;
+    while (endEquals < line.size() && line[line.size() - 1 - endEquals] == '=') {
+      endEquals++;
+    }
+    if (startEquals >= 2 && startEquals == endEquals && startEquals < line.size()) {
+      std::string headingText = line.substr(startEquals, line.size() - 2 * startEquals);
+      size_t first = headingText.find_first_not_of(" ");
+      size_t last = headingText.find_last_not_of(" ");
+      if (first != std::string::npos && last != std::string::npos) {
+        headingText = headingText.substr(first, (last - first + 1));
+      }
+      std::string mdHeading(startEquals, '#');
+      md += mdHeading + " " + headingText + "\n\n";
+    } else {
+      md += line + "\n";
+    }
+  }
+  return md;
+}
+
+std::string getArticleFilePath(const std::string &title) {
+  std::string mdPath = "/apps/wikipedia/" + sanitizeFilename(title) + ".md";
+  if (Storage.exists(mdPath.c_str())) {
+    return mdPath;
+  }
+  return "/apps/wikipedia/" + sanitizeFilename(title) + ".txt";
 }
 
 std::string urlEncode(const std::string &value) {
@@ -46,6 +137,254 @@ std::string urlEncode(const std::string &value) {
   }
   return escaped;
 }
+
+bool parseAndSaveWikipediaArticle(const std::string& tempJsonPath, std::string& outTitle) {
+  HalFile jsonFile;
+  if (!Storage.openFileForRead("WIKI", tempJsonPath.c_str(), jsonFile)) {
+    return false;
+  }
+
+  std::string tempMdPath = "/apps/wikipedia/md.tmp";
+  HalFile mdFile;
+  if (!Storage.openFileForWrite("WIKI", tempMdPath.c_str(), mdFile)) {
+    jsonFile.close();
+    return false;
+  }
+
+  enum class ParserState {
+    Scanning,
+    InString,
+    AfterString,
+    ExpectingColon,
+    ExpectingValue,
+    InValueString
+  };
+
+  ParserState state = ParserState::Scanning;
+  std::string currentKey = "";
+  std::string currentValue = "";
+  std::string currentLine = "";
+  bool inEscape = false;
+  outTitle.clear();
+
+  auto writeLineToMd = [&](const std::string& rawLine) {
+    std::string line = cleanUnicode(rawLine);
+    if (line.empty()) {
+      mdFile.write("\n", 1);
+      return;
+    }
+    
+    size_t startEquals = 0;
+    while (startEquals < line.size() && line[startEquals] == '=') {
+      startEquals++;
+    }
+    size_t endEquals = 0;
+    while (endEquals < line.size() && line[line.size() - 1 - endEquals] == '=') {
+      endEquals++;
+    }
+    
+    if (startEquals >= 2 && startEquals == endEquals && startEquals < line.size()) {
+      std::string headingText = line.substr(startEquals, line.size() - 2 * startEquals);
+      size_t first = headingText.find_first_not_of(" ");
+      size_t last = headingText.find_last_not_of(" ");
+      if (first != std::string::npos && last != std::string::npos) {
+        headingText = headingText.substr(first, (last - first + 1));
+      }
+      std::string mdHeading(startEquals, '#');
+      std::string formatted = mdHeading + " " + headingText + "\n\n";
+      mdFile.write(formatted.data(), formatted.size());
+    } else {
+      std::string formatted = line + "\n";
+      mdFile.write(formatted.data(), formatted.size());
+    }
+  };
+
+  int c;
+  while ((c = jsonFile.read()) != -1) {
+    char ch = static_cast<char>(c);
+
+    switch (state) {
+      case ParserState::Scanning:
+        if (ch == '"') {
+          currentKey.clear();
+          state = ParserState::InString;
+        }
+        break;
+
+      case ParserState::InString:
+        if (inEscape) {
+          currentKey += ch;
+          inEscape = false;
+        } else if (ch == '\\') {
+          inEscape = true;
+        } else if (ch == '"') {
+          state = ParserState::AfterString;
+        } else {
+          currentKey += ch;
+        }
+        break;
+
+      case ParserState::AfterString:
+        if (std::isspace(static_cast<unsigned char>(ch))) {
+          // ignore
+        } else if (ch == ':') {
+          state = ParserState::ExpectingColon;
+        } else {
+          state = ParserState::Scanning;
+        }
+        break;
+
+      case ParserState::ExpectingColon:
+        if (std::isspace(static_cast<unsigned char>(ch))) {
+          // ignore
+        } else if (ch == '"') {
+          currentValue.clear();
+          currentLine.clear();
+          inEscape = false;
+          if (currentKey == "title" || currentKey == "extract") {
+            state = ParserState::InValueString;
+          } else {
+            state = ParserState::ExpectingValue;
+          }
+        } else {
+          state = ParserState::Scanning;
+        }
+        break;
+
+      case ParserState::ExpectingValue:
+        if (inEscape) {
+          inEscape = false;
+        } else if (ch == '\\') {
+          inEscape = true;
+        } else if (ch == '"') {
+          state = ParserState::Scanning;
+        }
+        break;
+
+      case ParserState::InValueString:
+        if (inEscape) {
+          char escChar = 0;
+          if (ch == 'n') escChar = '\n';
+          else if (ch == 'r') escChar = '\r';
+          else if (ch == 't') escChar = '\t';
+          else if (ch == '"') escChar = '"';
+          else if (ch == '\\') escChar = '\\';
+          else if (ch == '/') escChar = '/';
+          else if (ch == 'u') {
+            uint16_t codepoint = 0;
+            bool ok = true;
+            for (int k = 0; k < 4; k++) {
+              int hexDigit = jsonFile.read();
+              if (hexDigit == -1) {
+                ok = false;
+                break;
+              }
+              char h = static_cast<char>(hexDigit);
+              codepoint <<= 4;
+              if (h >= '0' && h <= '9') codepoint |= (h - '0');
+              else if (h >= 'a' && h <= 'f') codepoint |= (h - 'a' + 10);
+              else if (h >= 'A' && h <= 'F') codepoint |= (h - 'A' + 10);
+              else {
+                ok = false;
+                break;
+              }
+            }
+            if (ok) {
+              std::string utf8Str = "";
+              if (codepoint < 0x80) {
+                utf8Str += static_cast<char>(codepoint);
+              } else if (codepoint < 0x800) {
+                utf8Str += static_cast<char>(0xC0 | (codepoint >> 6));
+                utf8Str += static_cast<char>(0x80 | (codepoint & 0x3F));
+              } else {
+                utf8Str += static_cast<char>(0xE0 | (codepoint >> 12));
+                utf8Str += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+                utf8Str += static_cast<char>(0x80 | (codepoint & 0x3F));
+              }
+              
+              if (currentKey == "title") {
+                currentValue += utf8Str;
+              } else if (currentKey == "extract") {
+                currentLine += utf8Str;
+              }
+            }
+          } else {
+            escChar = ch;
+          }
+          
+          if (escChar != 0) {
+            if (currentKey == "title") {
+              currentValue += escChar;
+            } else if (currentKey == "extract") {
+              if (escChar == '\n') {
+                writeLineToMd(currentLine);
+                currentLine.clear();
+              } else {
+                currentLine += escChar;
+              }
+            }
+          }
+          inEscape = false;
+        } else if (ch == '\\') {
+          inEscape = true;
+        } else if (ch == '"') {
+          if (currentKey == "title") {
+            outTitle = currentValue;
+          } else if (currentKey == "extract") {
+            if (!currentLine.empty()) {
+              writeLineToMd(currentLine);
+              currentLine.clear();
+            }
+          }
+          state = ParserState::Scanning;
+        } else {
+          if (currentKey == "title") {
+            currentValue += ch;
+          } else if (currentKey == "extract") {
+            if (ch == '\n') {
+              writeLineToMd(currentLine);
+              currentLine.clear();
+            } else {
+              currentLine += ch;
+            }
+          }
+        }
+        break;
+    }
+  }
+
+  jsonFile.close();
+  mdFile.close();
+
+  if (outTitle.empty()) {
+    Storage.remove(tempMdPath.c_str());
+    return false;
+  }
+
+  std::string finalPath = "/apps/wikipedia/" + sanitizeFilename(outTitle) + ".md";
+  HalFile finalFile;
+  if (!Storage.openFileForWrite("WIKI", finalPath.c_str(), finalFile)) {
+    Storage.remove(tempMdPath.c_str());
+    return false;
+  }
+
+  std::string titleHeader = "# " + outTitle + "\n\n";
+  finalFile.write(titleHeader.data(), titleHeader.size());
+
+  HalFile tempMdFile;
+  if (Storage.openFileForRead("WIKI", tempMdPath.c_str(), tempMdFile)) {
+    char copyBuf[512];
+    int bytesRead;
+    while ((bytesRead = tempMdFile.read(reinterpret_cast<uint8_t*>(copyBuf), sizeof(copyBuf))) > 0) {
+      finalFile.write(copyBuf, bytesRead);
+    }
+    tempMdFile.close();
+  }
+  finalFile.close();
+  Storage.remove(tempMdPath.c_str());
+
+  return true;
+}
 } // namespace
 
 void WikipediaActivity::onEnter() {
@@ -53,6 +392,8 @@ void WikipediaActivity::onEnter() {
   Storage.ensureDirectoryExists("/apps");
   Storage.ensureDirectoryExists("/apps/wikipedia");
 
+  currentArticleText.clear();
+  articleLines.clear();
   errorMessage.clear();
   loadOfflineArticlesList();
   state = WikiState::OfflineList;
@@ -72,27 +413,21 @@ void WikipediaActivity::loadOfflineArticlesList() {
     if (filename.length() > 4 &&
         filename.substr(filename.length() - 4) == ".txt") {
       offlineArticles.push_back(filename.substr(0, filename.length() - 4));
+    } else if (filename.length() > 3 &&
+               filename.substr(filename.length() - 3) == ".md") {
+      offlineArticles.push_back(filename.substr(0, filename.length() - 3));
     }
   }
   std::sort(offlineArticles.begin(), offlineArticles.end());
 }
 
-void WikipediaActivity::loadOfflineArticle(const std::string &title) {
-  std::string filepath = "/apps/wikipedia/" + sanitizeFilename(title) + ".txt";
-  String text = Storage.readFile(filepath.c_str());
-  currentArticleTitle = title;
-  currentArticleText = text.c_str();
-  errorMessage.clear();
-}
 
-void WikipediaActivity::saveArticleText(const std::string &title,
-                                        const std::string &text) {
-  std::string filepath = "/apps/wikipedia/" + sanitizeFilename(title) + ".txt";
-  Storage.writeFile(filepath.c_str(), String(text.c_str()));
-}
 
 void WikipediaActivity::ensureWifiConnected() {
-  // Do nothing
+  if (WiFi.status() != WL_CONNECTED) {
+    GUI.drawPopup(renderer, "Connecting to WiFi...");
+    WifiConnectHelper::ensureWifiConnected();
+  }
 }
 
 void WikipediaActivity::doSearch() {
@@ -181,41 +516,20 @@ void WikipediaActivity::doFetchArticle() {
     return;
   }
 
-  HalFile file;
-  if (Storage.openFileForRead("WIKI", tempPath, file)) {
-    JsonDocument filter;
-    filter["query"]["pages"] = true;
-
-    JsonDocument doc;
-    DeserializationError err =
-        deserializeJson(doc, file, DeserializationOption::Filter(filter));
-    file.close();
+  std::string title;
+  if (parseAndSaveWikipediaArticle(tempPath, title)) {
     Storage.remove(tempPath);
-
-    if (!err) {
-      JsonObject pages = doc["query"]["pages"].as<JsonObject>();
-      bool found = false;
-      for (JsonPair p : pages) {
-        std::string title = p.value()["title"] | "";
-        std::string extract = p.value()["extract"] | "";
-        if (!title.empty()) {
-          currentArticleTitle = title;
-          currentArticleText = extract;
-          saveArticleText(title, extract);
-          errorMessage.clear();
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        errorMessage = "Article not found.";
-      }
+    if (!title.empty()) {
+      currentArticleTitle = title;
+      currentArticleText.clear();
+      articleLines.clear();
+      errorMessage.clear();
     } else {
-      errorMessage = "Failed to parse article JSON.";
+      errorMessage = "Article not found.";
     }
   } else {
-    errorMessage = "Failed to open temp file.";
     Storage.remove(tempPath);
+    errorMessage = "Failed to parse article JSON.";
   }
 }
 
@@ -234,9 +548,17 @@ void WikipediaActivity::loop() {
   if (pendingArticle) {
     doFetchArticle();
     pendingArticle = false;
-    articleScrollOffset = 0;
-    state = WikiState::ArticleView;
-    requestUpdate();
+    if (errorMessage.empty()) {
+      state = WikiState::SearchResults;
+      std::string filepath = getArticleFilePath(currentArticleTitle);
+      auto txt = std::unique_ptr<Txt>(new Txt(filepath, "/.crosspoint"));
+      if (txt && txt->load()) {
+        activityManager.pushActivity(std::make_unique<TxtReaderActivity>(renderer, mappedInput, std::move(txt)));
+      }
+    } else {
+      state = WikiState::SearchResults;
+      requestUpdate();
+    }
     return;
   }
 
@@ -262,7 +584,7 @@ void WikipediaActivity::loop() {
   }
 
   if (state == WikiState::OfflineList) {
-    int totalItems = static_cast<int>(offlineArticles.size()) + 2;
+    int totalItems = static_cast<int>(offlineArticles.size()) + 1;
     if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
       selectedIndex = (selectedIndex - 1 + totalItems) % totalItems;
       requestUpdate();
@@ -285,14 +607,13 @@ void WikipediaActivity::loop() {
               }
               requestUpdate();
             });
-      } else if (selectedIndex == 1) {
-        activityManager.pushActivity(
-            std::make_unique<WifiSelectionActivity>(renderer, mappedInput));
       } else {
-        std::string title = offlineArticles[selectedIndex - 2];
-        loadOfflineArticle(title);
-        state = WikiState::ArticleView;
-        requestUpdate();
+        std::string title = offlineArticles[selectedIndex - 1];
+        std::string filepath = getArticleFilePath(title);
+        auto txt = std::unique_ptr<Txt>(new Txt(filepath, "/.crosspoint"));
+        if (txt && txt->load()) {
+          activityManager.pushActivity(std::make_unique<TxtReaderActivity>(renderer, mappedInput, std::move(txt)));
+        }
       }
     }
     return;
@@ -300,11 +621,6 @@ void WikipediaActivity::loop() {
 
   if (state == WikiState::SearchResults) {
     if (!errorMessage.empty()) {
-      if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-        activityManager.pushActivity(
-            std::make_unique<WifiSelectionActivity>(renderer, mappedInput));
-        return;
-      }
       if (mappedInput.wasReleased(MappedInputManager::Button::Right) ||
           mappedInput.wasReleased(MappedInputManager::Button::Down)) {
         state = WikiState::Loading;
@@ -340,12 +656,12 @@ void WikipediaActivity::loop() {
         requestUpdate();
       } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
         std::string title = searchResults[selectedIndex];
-        std::string filepath =
-            "/apps/wikipedia/" + sanitizeFilename(title) + ".txt";
+        std::string filepath = getArticleFilePath(title);
         if (Storage.exists(filepath.c_str())) {
-          loadOfflineArticle(title);
-          state = WikiState::ArticleView;
-          requestUpdate();
+          auto txt = std::unique_ptr<Txt>(new Txt(filepath, "/.crosspoint"));
+          if (txt && txt->load()) {
+            activityManager.pushActivity(std::make_unique<TxtReaderActivity>(renderer, mappedInput, std::move(txt)));
+          }
         } else {
           articleToFetch = title;
           state = WikiState::Loading;
@@ -416,19 +732,15 @@ void WikipediaActivity::render(RenderLock &&) {
   } else if (state == WikiState::OfflineList) {
     GUI.drawButtonMenu(
         renderer, Rect{0, contentTop, pageWidth, contentHeight},
-        offlineArticles.size() + 2, selectedIndex,
+        offlineArticles.size() + 1, selectedIndex,
         [this](int index) {
           if (index == 0)
             return std::string("[+ Search Wikipedia]");
-          if (index == 1)
-            return std::string("[* WiFi Settings]");
-          return offlineArticles[index - 2];
+          return offlineArticles[index - 1];
         },
         [this](int index) {
           if (index == 0)
             return UIIcon::File;
-          if (index == 1)
-            return UIIcon::Library;
           return UIIcon::Book;
         });
 
@@ -444,7 +756,7 @@ void WikipediaActivity::render(RenderLock &&) {
       renderer.drawCenteredText(SMALL_FONT_ID, textY + 30,
                                 "Configure your network or retry search.");
       const auto labels =
-          mappedInput.mapLabels(tr(STR_BACK), "WiFi", nullptr, "Retry");
+          mappedInput.mapLabels(tr(STR_BACK), nullptr, nullptr, "Retry");
       GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3,
                           labels.btn4);
     } else if (searchResults.empty()) {
@@ -466,7 +778,7 @@ void WikipediaActivity::render(RenderLock &&) {
             if (Storage.exists(filepath.c_str())) {
               return UIIcon::Book; // Cached offline
             }
-            return UIIcon::Wifi; // Remote online
+            return UIIcon::Book; // Remote online
           });
 
       const auto labels = mappedInput.mapLabels(

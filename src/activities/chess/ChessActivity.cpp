@@ -405,11 +405,11 @@ void ChessActivity::render(RenderLock&&) {
           case -6: pieceStr = "\u265A"; break; // Black King
         }
 
-        int tW = renderer.getTextWidth(NOTOSANS_48_EMOJI_FONT_ID, pieceStr);
-        int tH = renderer.getTextHeight(NOTOSANS_48_EMOJI_FONT_ID);
+        int tW = renderer.getTextWidth(NOTOSANS_16_EMOJI_FONT_ID, pieceStr);
+        int tH = renderer.getTextHeight(NOTOSANS_16_EMOJI_FONT_ID);
         int px = cx + (cellS - tW) / 2;
         int py = cy + (cellS - tH) / 2;
-        renderer.drawText(NOTOSANS_48_EMOJI_FONT_ID, px, py, pieceStr, true);
+        renderer.drawText(NOTOSANS_16_EMOJI_FONT_ID, px, py, pieceStr, true);
       }
 
       // Highlight selected piece

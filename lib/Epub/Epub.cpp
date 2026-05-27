@@ -791,7 +791,12 @@ int Epub::getSpineItemsCount() const {
   return bookMetadataCache->getSpineCount();
 }
 
-size_t Epub::getCumulativeSpineItemSize(const int spineIndex) const { return getSpineItem(spineIndex).cumulativeSize; }
+size_t Epub::getCumulativeSpineItemSize(const int spineIndex) const {
+  if (spineIndex < 0 || spineIndex >= getSpineItemsCount()) {
+    return 0;
+  }
+  return getSpineItem(spineIndex).cumulativeSize;
+}
 
 BookMetadataCache::SpineEntry Epub::getSpineItem(const int spineIndex) const {
   if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
@@ -850,7 +855,12 @@ int Epub::getSpineIndexForTocIndex(const int tocIndex) const {
   return spineIndex;
 }
 
-int Epub::getTocIndexForSpineIndex(const int spineIndex) const { return getSpineItem(spineIndex).tocIndex; }
+int Epub::getTocIndexForSpineIndex(const int spineIndex) const {
+  if (spineIndex < 0 || spineIndex >= getSpineItemsCount()) {
+    return -1;
+  }
+  return getSpineItem(spineIndex).tocIndex;
+}
 
 size_t Epub::getBookSize() const {
   if (!bookMetadataCache || !bookMetadataCache->isLoaded() || bookMetadataCache->getSpineCount() == 0) {
@@ -893,8 +903,15 @@ float Epub::calculateProgress(const int currentSpineIndex, const float currentSp
   if (bookSize == 0) {
     return 0.0f;
   }
-  const size_t prevChapterSize = (currentSpineIndex >= 1) ? getCumulativeSpineItemSize(currentSpineIndex - 1) : 0;
-  const size_t curChapterSize = getCumulativeSpineItemSize(currentSpineIndex) - prevChapterSize;
+  int spineIndex = currentSpineIndex;
+  if (spineIndex < 0) {
+    spineIndex = 0;
+  }
+  if (spineIndex >= getSpineItemsCount()) {
+    return 1.0f;
+  }
+  const size_t prevChapterSize = (spineIndex >= 1) ? getCumulativeSpineItemSize(spineIndex - 1) : 0;
+  const size_t curChapterSize = getCumulativeSpineItemSize(spineIndex) - prevChapterSize;
   const float sectionProgSize = currentSpineRead * static_cast<float>(curChapterSize);
   const float totalProgress = static_cast<float>(prevChapterSize) + sectionProgSize;
   return totalProgress / static_cast<float>(bookSize);

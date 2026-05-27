@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 #include <HalClock.h>
 #include <HalPowerManager.h>
+#include <time.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <WiFi.h>
@@ -408,7 +409,7 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
     auto truncatedTitle = renderer.truncatedText(UI_12_FONT_ID, title,
                                                  rect.width - padding * 2 - BaseMetrics::values.contentSidePadding * 2,
                                                  EpdFontFamily::BOLD);
-    renderer.drawCenteredText(UI_12_FONT_ID, rect.y + 5, truncatedTitle.c_str(), true, EpdFontFamily::BOLD);
+    renderer.drawText(UI_12_FONT_ID, rect.x + BaseMetrics::values.contentSidePadding, rect.y + 5, truncatedTitle.c_str(), true, EpdFontFamily::BOLD);
   }
 
   if (subtitle) {
@@ -419,6 +420,8 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
                       rect.x + rect.width - BaseMetrics::values.contentSidePadding - truncatedSubtitleWidth, subtitleY,
                       truncatedSubtitle.c_str(), true);
   }
+
+  drawClock(renderer, rect);
 }
 
 void BaseTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label, const char* rightLabel) const {
@@ -702,9 +705,10 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 
 void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
-                               const std::function<UIIcon(int index)>& rowIcon) const {
+                               const std::function<UIIcon(int index)>& rowIcon,
+                               int maxPageItems) const {
   const int rowHeight = BaseMetrics::values.menuRowHeight + BaseMetrics::values.menuSpacing;
-  const int pageItems = std::min(6, std::max(1, rect.height / rowHeight));
+  const int pageItems = std::min(maxPageItems, std::max(1, rect.height / rowHeight));
   const int safeSelectedIndex = std::max(0, selectedIndex);
   int pageStartIndex = safeSelectedIndex - (pageItems - 1) / 2;
   if (pageStartIndex > buttonCount - pageItems) {
@@ -1043,4 +1047,36 @@ void BaseTheme::drawKeyboardKey(const GfxRenderer& renderer, Rect rect, const ch
     renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - secWidth - metrics.keyboardSecondaryLabelRightPadding,
                       rect.y + metrics.keyboardSecondaryLabelTopPadding, secondaryLabel, !invert);
   }
+}
+
+void BaseTheme::drawClock(const GfxRenderer& renderer, Rect rect) const {
+  time_t now = time(nullptr);
+  struct tm timeinfo;
+  localtime_r(&now, &timeinfo);
+  char timeStr[6];
+  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+
+  const int clockHeight = 11;
+  const int clockWidth = 11;
+  const int spacing = 4;
+  const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, timeStr);
+  const int totalWidth = clockWidth + spacing + textWidth;
+
+  const int centerX = rect.x + rect.width / 2;
+  const int startX = centerX - totalWidth / 2;
+  const int clockX = startX;
+  const int clockY = rect.y + (rect.height - clockHeight) / 2;
+  const int textX = clockX + clockWidth + spacing;
+  const int textY = rect.y + (rect.height - renderer.getLineHeight(SMALL_FONT_ID)) / 2;
+
+  // Draw smartwatch / clock outline (rounded rectangle with radius 3)
+  renderer.drawRoundedRect(clockX, clockY, clockWidth, clockHeight, 1, 3, true);
+  // Center dot
+  renderer.drawPixel(clockX + 5, clockY + 5, true);
+  // Hands: minute hand up, hour hand right
+  renderer.drawLine(clockX + 5, clockY + 5, clockX + 5, clockY + 2, true);
+  renderer.drawLine(clockX + 5, clockY + 5, clockX + 8, clockY + 5, true);
+
+  // Draw time text
+  renderer.drawText(SMALL_FONT_ID, textX, textY, timeStr, true);
 }

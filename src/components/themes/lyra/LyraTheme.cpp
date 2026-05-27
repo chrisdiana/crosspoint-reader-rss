@@ -36,12 +36,8 @@
 #include "components/icons/reddit24.h"
 #include "components/icons/clock.h"
 #include "components/icons/clock24.h"
-#include "components/icons/rss.h"
-#include "components/icons/rss24.h"
 #include "components/icons/wikipedia.h"
 #include "components/icons/wikipedia24.h"
-#include "components/icons/minesweeper.h"
-#include "components/icons/minesweeper24.h"
 #include "components/icons/chess.h"
 #include "components/icons/chess24.h"
 #include "components/icons/dice.h"
@@ -82,12 +78,8 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return Reddit24Icon;
       case UIIcon::Clock:
         return Clock24Icon;
-      case UIIcon::Rss:
-        return Rss24Icon;
       case UIIcon::Wikipedia:
         return Wikipedia24Icon;
-      case UIIcon::Minesweeper:
-        return Minesweeper24Icon;
       case UIIcon::Chess:
         return Chess24Icon;
       case UIIcon::Dice:
@@ -123,12 +115,8 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return RedditIcon;
       case UIIcon::Clock:
         return ClockIcon;
-      case UIIcon::Rss:
-        return RssIcon;
       case UIIcon::Wikipedia:
         return WikipediaIcon;
-      case UIIcon::Minesweeper:
-        return MinesweeperIcon;
       case UIIcon::Chess:
         return ChessIcon;
       case UIIcon::Dice:
@@ -209,6 +197,8 @@ void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
                       rect.x + rect.width - LyraMetrics::values.contentSidePadding - truncatedSubtitleWidth,
                       rect.y + 50, truncatedSubtitle.c_str(), true);
   }
+
+  drawClock(renderer, rect);
 }
 
 void LyraTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label, const char* rightLabel) const {
@@ -563,9 +553,18 @@ void LyraTheme::drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) c
 
 void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
-                               const std::function<UIIcon(int index)>& rowIcon) const {
-  const int rowHeight = LyraMetrics::values.menuRowHeight + LyraMetrics::values.menuSpacing;
-  const int pageItems = std::min(6, std::max(1, rect.height / rowHeight));
+                               const std::function<UIIcon(int index)>& rowIcon,
+                               int maxPageItems) const {
+  int menuRowHeight = LyraMetrics::values.menuRowHeight;
+  int menuSpacing = LyraMetrics::values.menuSpacing;
+  int activeFont = UI_12_FONT_ID;
+  if (maxPageItems > 6) {
+    menuRowHeight = 36;
+    menuSpacing = 4;
+    activeFont = UI_10_FONT_ID;
+  }
+  const int rowHeight = menuRowHeight + menuSpacing;
+  const int pageItems = std::min(maxPageItems, std::max(1, rect.height / rowHeight));
   const int safeSelectedIndex = std::max(0, selectedIndex);
   int pageStartIndex = safeSelectedIndex - (pageItems - 1) / 2;
   if (pageStartIndex > buttonCount - pageItems) {
@@ -594,7 +593,7 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
     int tileWidth = contentWidth - LyraMetrics::values.contentSidePadding * 2;
     Rect tileRect = Rect{rect.x + LyraMetrics::values.contentSidePadding,
                          rect.y + (i - pageStartIndex) * rowHeight, tileWidth,
-                         LyraMetrics::values.menuRowHeight};
+                         menuRowHeight};
 
     const bool selected = selectedIndex == i;
 
@@ -605,36 +604,34 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
     std::string labelStr = buttonLabel(i);
     const char* label = labelStr.c_str();
     int textX = tileRect.x + 16;
-    const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
-    const int textY = tileRect.y + (LyraMetrics::values.menuRowHeight - lineHeight) / 2;
+    const int lineHeight = renderer.getLineHeight(activeFont);
+    const int textY = tileRect.y + (menuRowHeight - lineHeight) / 2;
 
     if (rowIcon != nullptr) {
       UIIcon icon = rowIcon(i);
-      const uint8_t* iconBitmap = iconForName(icon, mainMenuIconSize);
-      int drawIconSize = mainMenuIconSize;
-      int iconYOffset = 3;
+      int drawIconSize = (menuRowHeight >= 48) ? mainMenuIconSize : 24;
+      const uint8_t* iconBitmap = iconForName(icon, drawIconSize);
+      int iconYOffset = 0;
       int iconXOffset = 0;
-      if (iconBitmap == nullptr) {
-        // Try fallback to 24px icon
+      if (iconBitmap == nullptr && drawIconSize == 40) {
         iconBitmap = iconForName(icon, 24);
         if (iconBitmap != nullptr) {
           drawIconSize = 24;
-          iconYOffset = 3 + (mainMenuIconSize - 24) / 2;
-          iconXOffset = (mainMenuIconSize - 24) / 2;
-        } else {
-          // Absolute fallback
-          iconBitmap = File24Icon;
-          drawIconSize = 24;
-          iconYOffset = 3 + (mainMenuIconSize - 24) / 2;
-          iconXOffset = (mainMenuIconSize - 24) / 2;
+          iconYOffset = (40 - 24) / 2;
+          iconXOffset = (40 - 24) / 2;
         }
       }
+      if (iconBitmap == nullptr) {
+        iconBitmap = File24Icon;
+        drawIconSize = 24;
+        iconYOffset = (menuRowHeight - 24) / 2;
+      }
       if (iconBitmap != nullptr) {
-        renderer.drawIcon(iconBitmap, textX + iconXOffset, textY + iconYOffset, drawIconSize, drawIconSize);
-        textX += mainMenuIconSize + hPaddingInSelection + 2;
+        renderer.drawIcon(iconBitmap, textX + iconXOffset, tileRect.y + (menuRowHeight - drawIconSize) / 2, drawIconSize, drawIconSize);
+        textX += drawIconSize + hPaddingInSelection + 2;
       }
     }
 
-    renderer.drawText(UI_12_FONT_ID, textX, textY, label, true);
+    renderer.drawText(activeFont, textX, textY, label, true);
   }
 }

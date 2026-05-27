@@ -77,7 +77,10 @@ void RedditActivity::onEnter() {
 }
 
 void RedditActivity::ensureWifiConnected() {
-  // Do nothing
+  if (WiFi.status() != WL_CONNECTED) {
+    GUI.drawPopup(renderer, "Connecting to WiFi...");
+    WifiConnectHelper::ensureWifiConnected();
+  }
 }
 
 void RedditActivity::onExit() {

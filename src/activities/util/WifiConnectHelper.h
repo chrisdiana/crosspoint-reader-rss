@@ -26,7 +26,7 @@ namespace WifiConnectHelper {
         }
         
         int retries = 0;
-        while (WiFi.status() != WL_CONNECTED && retries < 25) { // 2.5 seconds timeout
+        while (WiFi.status() != WL_CONNECTED && retries < 100) { // 10 seconds timeout
           delay(100);
           retries++;
         }
@@ -37,14 +37,44 @@ namespace WifiConnectHelper {
       }
     }
     
+    // Loop through all other credentials saved in WIFI_STORE
+    for (const auto& cred : WIFI_STORE.getCredentials()) {
+      if (cred.ssid == lastSsid) {
+        continue;
+      }
+      LOG_DBG("WIFI_HELP", "Auto-connecting to other saved SSID: %s", cred.ssid.c_str());
+      WiFi.persistent(false);
+      if (!cred.password.empty()) {
+        WiFi.begin(cred.ssid.c_str(), cred.password.c_str());
+      } else {
+        WiFi.begin(cred.ssid.c_str());
+      }
+      
+      int retries = 0;
+      while (WiFi.status() != WL_CONNECTED && retries < 80) { // 8 seconds timeout
+        delay(100);
+        retries++;
+      }
+      if (WiFi.status() == WL_CONNECTED) {
+        LOG_DBG("WIFI_HELP", "Successfully connected to %s", cred.ssid.c_str());
+        WIFI_STORE.setLastConnectedSsid(cred.ssid);
+        WIFI_STORE.saveToFile();
+        return true;
+      }
+    }
+    
     // Otherwise try standard begin (fallback to NVS/SDK credentials)
     LOG_DBG("WIFI_HELP", "Fallback begin connecting...");
     WiFi.begin();
     int retries = 0;
-    while (WiFi.status() != WL_CONNECTED && retries < 15) { // 1.5 seconds timeout
+    while (WiFi.status() != WL_CONNECTED && retries < 80) { // 8 seconds timeout
       delay(100);
       retries++;
     }
     return WiFi.status() == WL_CONNECTED;
+  }
+
+  inline bool ensureWifiConnected() {
+    return connectToDefaultWifi();
   }
 }
