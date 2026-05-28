@@ -3,10 +3,10 @@
 #include "activities/weather/WeatherActivity.h"
 #include "activities/sudoku/SudokuActivity.h"
 #include "activities/reddit/RedditActivity.h"
-#include "activities/clock/ClockActivity.h"
 #include "activities/wikipedia/WikipediaActivity.h"
 #include "activities/chess/ChessActivity.h"
 #include "activities/dice/DiceActivity.h"
+#include "activities/rss/RssActivity.h"
 
 // System Activities
 #include "activities/home/FileBrowserActivity.h"
@@ -90,11 +90,6 @@ AppRegistry::AppRegistry() {
     return std::make_unique<RedditActivity>(r, i);
   }));
 
-  // Clock App
-  apps.push_back(std::make_unique<App>("Clock", UIIcon::Clock, [](GfxRenderer& r, MappedInputManager& i) {
-    return std::make_unique<ClockActivity>(r, i);
-  }));
-
   // Wikipedia App
   apps.push_back(std::make_unique<App>("Wikipedia", UIIcon::Wikipedia, [](GfxRenderer& r, MappedInputManager& i) {
     return std::make_unique<WikipediaActivity>(r, i);
@@ -108,5 +103,10 @@ AppRegistry::AppRegistry() {
   // Dice App
   apps.push_back(std::make_unique<App>("Dice", UIIcon::Dice, [](GfxRenderer& r, MappedInputManager& i) {
     return std::make_unique<DiceActivity>(r, i);
+  }));
+
+  // RSS Feed App
+  apps.push_back(std::make_unique<App>("RSS Feed", UIIcon::Library, [](GfxRenderer& r, MappedInputManager& i) {
+    return std::make_unique<RssActivity>(r, i);
   }));
 }

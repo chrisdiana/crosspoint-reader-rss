@@ -120,6 +120,9 @@ void ActivityManager::loop() {
           stackActivities.back()->onExit();
           stackActivities.pop_back();
         }
+      } else if (pendingAction == PendingAction::ReplaceTop) {
+        // Destroy the current activity, but do NOT clear the stack
+        exitActivity(lock);
       } else if (pendingAction == PendingAction::Push) {
         // Move current activity to stack
         stackActivities.push_back(std::move(currentActivity));
@@ -168,6 +171,16 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
   }
 }
 
+void ActivityManager::replaceTopActivity(std::unique_ptr<Activity>&& newActivity) {
+  if (currentActivity) {
+    pendingActivity = std::move(newActivity);
+    pendingAction = PendingAction::ReplaceTop;
+  } else {
+    currentActivity = std::move(newActivity);
+    currentActivity->onEnter();
+  }
+}
+
 void ActivityManager::goToFileTransfer() {
   replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput));
 }
@@ -194,6 +207,10 @@ void ActivityManager::goToBrowser() {
 
 void ActivityManager::goToReader(std::string path) {
   replaceActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path)));
+}
+
+void ActivityManager::pushReader(std::string path) {
+  pushActivity(std::make_unique<ReaderActivity>(renderer, mappedInput, std::move(path)));
 }
 
 void ActivityManager::goToSleep(bool fromTimeout) {

@@ -45,7 +45,7 @@ class ActivityManager {
 
   // Pending activity to be launched on next loop iteration
   std::unique_ptr<Activity> pendingActivity;
-  enum class PendingAction { None, Push, Pop, Replace };
+  enum class PendingAction { None, Push, Pop, Replace, ReplaceTop };
   PendingAction pendingAction = PendingAction::None;
 
   // Task to render and display the activity
@@ -79,6 +79,9 @@ class ActivityManager {
   // Will replace currentActivity and drop all activities on stack
   void replaceActivity(std::unique_ptr<Activity>&& newActivity);
 
+  // Will replace currentActivity but keep other activities on stack
+  void replaceTopActivity(std::unique_ptr<Activity>&& newActivity);
+
   // goTo... functions are convenient wrapper for replaceActivity()
   void goToFileTransfer();
   void goToSettings();
@@ -86,6 +89,7 @@ class ActivityManager {
   void goToRecentBooks();
   void goToBrowser();
   void goToReader(std::string path);
+  void pushReader(std::string path);
   void goToSleep(bool fromTimeout = false);
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);

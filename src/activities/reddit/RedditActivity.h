@@ -3,6 +3,8 @@
 #include "activities/Activity.h"
 #include <string>
 #include <vector>
+#include <functional>
+#include <atomic>
 
 struct RedditPost {
   std::string id;
@@ -12,6 +14,10 @@ struct RedditPost {
   std::string permalink;
   int numComments = 0;
   int ups = 0;
+  std::string timestamp; // Unix timestamp as string
+  std::string selftext;  // Text body of the post
+  std::string imageUrl;  // URL of the post's image, if it has one
+  std::string postUrl;   // External web page URL, if it links to one
 };
 
 struct RedditComment {
@@ -20,24 +26,24 @@ struct RedditComment {
 };
 
 enum class RedditState {
+  SubredditList,
   LoadingPosts,
   PostList,
   LoadingComments,
-  CommentsList,
-  ManageSubscriptions
+  CommentsList
 };
 
 class RedditActivity final : public Activity {
  private:
-  RedditState state = RedditState::LoadingPosts;
+  RedditState state = RedditState::SubredditList;
   std::vector<RedditPost> posts;
   std::vector<RedditComment> comments;
   std::vector<std::string> subscriptions;
+  std::string activeSubreddit;
 
   int selectedPostIndex = 0;
   int selectedCommentIndex = 0;
   int selectedSubIndex = 0;
-  int selectedHeaderAction = 0; // 0 = Refresh, 1 = Subreddits
   int postsScrollOffset = 0;
   int commentsScrollOffset = 0;
 
@@ -50,15 +56,22 @@ class RedditActivity final : public Activity {
   bool isRefreshing = false;
   bool wifiConnecting = false;
   bool pendingUpdatePosts = false;
+  bool pendingUpdateComments = false;
   bool backgroundFetchFailed = false;
+  bool isFetchCommentsTask = false;
   std::vector<RedditPost> fetchedPosts;
   void* fetchTaskHandle = nullptr;
   int commentLoadIndex = 0;
+  int loadedImageHeight = 0;
+  bool cancelFetch = false;
+  bool wifiWasUsed = false;
 
   void savePostsCache();
   bool loadPostsCache();
   void saveCommentsCache(const std::string& id);
   bool loadCommentsCache(const std::string& id);
+  void saveSubredditMarkdown(const std::string& subName, const std::vector<RedditPost>& postsList);
+  bool parsePostsFromMarkdown(const std::string& filepath, std::vector<RedditPost>& targetList);
 
   void loadSubscriptions();
   void saveSubscriptions();
@@ -72,7 +85,6 @@ class RedditActivity final : public Activity {
   bool fetchComments(const std::string& permalink);
   void performFetchPosts();
   void performFetchComments();
-  void ensureWifiConnected();
 
  public:
   void runBackgroundFetch();

@@ -2,6 +2,7 @@
 
 #include "activities/Activity.h"
 #include <string>
+#include <functional>
 
 class WeatherActivity final : public Activity {
  public:
@@ -21,7 +22,6 @@ class WeatherActivity final : public Activity {
   int weatherCode = 0;
   std::string timeStr;
   std::string cityName;
-  bool offlineMode = false;
   std::string errorMessage;
   bool shouldFetch = false;
 
@@ -34,6 +34,8 @@ class WeatherActivity final : public Activity {
   void* fetchTaskHandle = nullptr;
 
   void performFetch();
+  void cancelFetchTask();
+
 
  public:
   void runBackgroundFetch();

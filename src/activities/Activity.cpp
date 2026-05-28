@@ -22,3 +22,38 @@ void Activity::startActivityForResult(std::unique_ptr<Activity>&& activity, Acti
 void Activity::setResult(ActivityResult&& result) { this->result = std::move(result); }
 
 void Activity::finish() { activityManager.popActivity(); }
+
+#include <WiFi.h>
+#include "network/WifiSelectionActivity.h"
+#include "util/WifiConnectHelper.h"
+#include "components/UITheme.h"
+#include <HalClock.h>
+#include "CrossPointSettings.h"
+
+void Activity::ensureWifiConnected(std::function<void()> onConnected, std::function<void()> onCancelled) {
+  auto syncClockIfNeeded = []() {
+    if (halClock.isAvailable() && !SETTINGS.clockHasBeenSynced) {
+      if (halClock.syncFromNTP()) {
+        SETTINGS.clockHasBeenSynced = 1;
+        SETTINGS.saveToFile();
+      }
+    }
+  };
+
+  if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+    syncClockIfNeeded();
+    if (onConnected) onConnected();
+    return;
+  }
+
+  startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+                         [this, onConnected, onCancelled, syncClockIfNeeded](const ActivityResult& result) {
+                           if (!result.isCancelled) {
+                             syncClockIfNeeded();
+                             if (onConnected) onConnected();
+                           } else {
+                             if (onCancelled) onCancelled();
+                             else requestUpdate();
+                           }
+                         });
+}

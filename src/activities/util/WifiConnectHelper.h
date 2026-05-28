@@ -9,7 +9,16 @@ namespace WifiConnectHelper {
       return true;
     }
 
+    LOG_DBG("WIFI_HELP", "Powering on WiFi antenna...");
+    WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
+    WiFi.disconnect(true, true);
+    delay(150);
+
+    String mac = WiFi.macAddress();
+    mac.replace(":", "");
+    String hostname = "CrossPoint-Reader-" + mac;
+    WiFi.setHostname(hostname.c_str());
     
     // Check if there is a last connected SSID in WIFI_STORE
     WIFI_STORE.loadFromFile();
@@ -76,5 +85,24 @@ namespace WifiConnectHelper {
 
   inline bool ensureWifiConnected() {
     return connectToDefaultWifi();
+  }
+
+  inline bool waitForTimeSync(int timeoutMs = 5000) {
+    configTzTime("UTC0", "pool.ntp.org", "time.nist.gov");
+    time_t now = time(nullptr);
+    struct tm timeinfo;
+    gmtime_r(&now, &timeinfo);
+    int elapsed = 0;
+    while (timeinfo.tm_year < (2020 - 1900) && elapsed < timeoutMs) {
+      delay(100);
+      elapsed += 100;
+      now = time(nullptr);
+      gmtime_r(&now, &timeinfo);
+    }
+    if (timeinfo.tm_year >= (2020 - 1900)) {
+      return true;
+    }
+    LOG_ERR("WIFI_HELP", "NTP time sync timed out");
+    return false;
   }
 }

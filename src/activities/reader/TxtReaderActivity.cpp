@@ -68,10 +68,14 @@ void TxtReaderActivity::loop() {
     return;
   }
 
-  // Short press BACK goes directly to home (or pops to caller if it's a Wikipedia article)
+  // Short press BACK goes directly to home (or pops to caller if it's a Wikipedia/RSS/Reddit downloaded link)
   if (mappedInput.wasReleased(MappedInputManager::Button::Back) &&
       mappedInput.getHeldTime() < ReaderUtils::GO_HOME_MS) {
-    if (txt && txt->getPath().rfind("/apps/wikipedia/", 0) == 0) {
+    if (txt && (txt->getPath().rfind("/apps/wikipedia/", 0) == 0 ||
+                txt->getPath().rfind("/apps/websites/", 0) == 0 ||
+                txt->getPath().rfind("/websites/", 0) == 0 ||
+                txt->getPath().rfind("/apps/webbrowser/", 0) == 0 ||
+                txt->getPath().rfind("/apps/rss/", 0) == 0)) {
       activityManager.popActivity();
     } else {
       onGoHome();
@@ -183,8 +187,6 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>
 
   if (isHtml) {
     size_t i = 0;
-    bool inTag = false;
-    std::string tagContent = "";
     std::string cleanLine = "";
     char marker = '\7';
     EpdFontFamily::Style style = EpdFontFamily::REGULAR;
@@ -198,114 +200,232 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>
     bool insideBlockquote = false;
 
     while (i < chunkSize && static_cast<int>(outLines.size()) < linesPerPage) {
-      char c = buffer[i];
-
-      if (c == '<') {
-        inTag = true;
-        tagContent.clear();
-        i++;
+      // 1. Handle HTML Comments: <!-- ... -->
+      if (i + 4 <= chunkSize && 
+          buffer[i] == '<' && buffer[i+1] == '!' && buffer[i+2] == '-' && buffer[i+3] == '-') {
+        i += 4;
+        while (i < chunkSize) {
+          if (i + 3 <= chunkSize && buffer[i] == '-' && buffer[i+1] == '-' && buffer[i+2] == '>') {
+            i += 3;
+            break;
+          }
+          i++;
+        }
         continue;
       }
 
-      if (inTag) {
-        if (c == '>') {
-          inTag = false;
-          std::string tag = tagContent;
-          std::transform(tag.begin(), tag.end(), tag.begin(), ::tolower);
-
-          bool isClosing = (!tag.empty() && tag[0] == '/');
-          if (isClosing) {
-            tag = tag.substr(1);
+      // 2. Handle Tags
+      if (buffer[i] == '<') {
+        size_t tagStart = i;
+        size_t tagEnd = i;
+        while (tagEnd < chunkSize && buffer[tagEnd] != '>') {
+          tagEnd++;
+        }
+        
+        if (tagEnd >= chunkSize) {
+          i = chunkSize;
+          break;
+        }
+        
+        std::string tagContent(reinterpret_cast<char*>(buffer + tagStart + 1), tagEnd - tagStart - 1);
+        i = tagEnd + 1; // Move past '>'
+        
+        std::string tagName = "";
+        size_t firstSpace = tagContent.find_first_of(" \t\r\n/");
+        if (firstSpace != std::string::npos) {
+          tagName = tagContent.substr(0, firstSpace);
+        } else {
+          tagName = tagContent;
+        }
+        std::transform(tagName.begin(), tagName.end(), tagName.begin(), ::tolower);
+        
+        bool isClosing = (!tagContent.empty() && tagContent[0] == '/');
+        if (isClosing && !tagName.empty() && tagName[0] == '/') {
+          tagName = tagName.substr(1);
+        }
+        
+        // If it is a style/script/head tag, skip content until the closing tag
+        if (!isClosing && (tagName == "style" || tagName == "script" || tagName == "head")) {
+          std::string closeTagPattern = "</" + tagName + ">";
+          while (i < chunkSize) {
+            if (i + closeTagPattern.length() <= chunkSize) {
+              std::string testStr(reinterpret_cast<char*>(buffer + i), closeTagPattern.length());
+              std::transform(testStr.begin(), testStr.end(), testStr.begin(), ::tolower);
+              if (testStr == closeTagPattern) {
+                i += closeTagPattern.length();
+                break;
+              }
+            }
+            i++;
           }
-          if (!tag.empty() && tag.back() == '/') {
-            tag.pop_back();
-          }
-          while (!tag.empty() && isspace(tag.back())) tag.pop_back();
-
-          // Handle tags
-          if (tag == "h1") {
-            if (!cleanLine.empty()) {
-              wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-              cleanLine.clear();
-            }
-            insideH1 = !isClosing;
-            marker = isClosing ? '\7' : '\1';
-            style = isClosing ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
-            indent = 0;
-          } else if (tag == "h2") {
-            if (!cleanLine.empty()) {
-              wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-              cleanLine.clear();
-            }
-            insideH2 = !isClosing;
-            marker = isClosing ? '\7' : '\2';
-            style = isClosing ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
-            indent = 0;
-          } else if (tag == "h3") {
-            if (!cleanLine.empty()) {
-              wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-              cleanLine.clear();
-            }
-            insideH3 = !isClosing;
-            marker = isClosing ? '\7' : '\3';
-            style = isClosing ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
-            indent = 0;
-          } else if (tag == "blockquote") {
-            if (!cleanLine.empty()) {
-              wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-              cleanLine.clear();
-            }
-            insideBlockquote = !isClosing;
-            marker = isClosing ? '\7' : '\4';
-            style = isClosing ? EpdFontFamily::REGULAR : EpdFontFamily::ITALIC;
-            indent = isClosing ? 0 : 15;
-          } else if (tag == "li") {
-            if (!cleanLine.empty()) {
-              wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-              cleanLine.clear();
-            }
-            if (!isClosing) {
-              marker = '\5';
-              indent = 15;
-              cleanLine = "•  ";
-            } else {
-              marker = '\7';
-              indent = 0;
-            }
-          } else if (tag == "hr") {
-            if (!cleanLine.empty()) {
-              wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-              cleanLine.clear();
-            }
-            std::string hrStr = "";
-            hrStr += '\6';
-            outLines.push_back(hrStr);
-          } else if (tag == "p" || tag == "div" || tag == "br") {
-            if (!cleanLine.empty()) {
-              wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-              cleanLine.clear();
-            }
-            if (insideBlockquote) {
-              marker = '\4';
-              style = EpdFontFamily::ITALIC;
-              indent = 15;
-            } else {
-              marker = '\7';
-              style = EpdFontFamily::REGULAR;
-              indent = 0;
-            }
-          }
-
-          lastWasSpace = true;
-          i++;
           continue;
         }
-
-        tagContent += c;
-        i++;
+        
+        // Process standard structural/styling tags
+        if (tagName == "h1") {
+          if (!cleanLine.empty()) {
+            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
+            cleanLine.clear();
+          }
+          insideH1 = !isClosing;
+          marker = isClosing ? '\7' : '\1';
+          style = isClosing ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
+          indent = 0;
+        } else if (tagName == "h2") {
+          if (!cleanLine.empty()) {
+            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
+            cleanLine.clear();
+          }
+          insideH2 = !isClosing;
+          marker = isClosing ? '\7' : '\2';
+          style = isClosing ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
+          indent = 0;
+        } else if (tagName == "h3") {
+          if (!cleanLine.empty()) {
+            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
+            cleanLine.clear();
+          }
+          insideH3 = !isClosing;
+          marker = isClosing ? '\7' : '\3';
+          style = isClosing ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
+          indent = 0;
+        } else if (tagName == "blockquote") {
+          if (!cleanLine.empty()) {
+            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
+            cleanLine.clear();
+          }
+          insideBlockquote = !isClosing;
+          marker = isClosing ? '\7' : '\4';
+          style = isClosing ? EpdFontFamily::REGULAR : EpdFontFamily::ITALIC;
+          indent = isClosing ? 0 : 15;
+        } else if (tagName == "li") {
+          if (!cleanLine.empty()) {
+            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
+            cleanLine.clear();
+          }
+          if (!isClosing) {
+            marker = '\5';
+            indent = 15;
+            cleanLine = "•  ";
+          } else {
+            marker = '\7';
+            indent = 0;
+          }
+        } else if (tagName == "hr") {
+          if (!cleanLine.empty()) {
+            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
+            cleanLine.clear();
+          }
+          std::string hrStr = "";
+          hrStr += '\6';
+          outLines.push_back(hrStr);
+        } else if (tagName == "p" || tagName == "div" || tagName == "br") {
+          if (!cleanLine.empty()) {
+            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
+            cleanLine.clear();
+          }
+          if (insideBlockquote) {
+            marker = '\4';
+            style = EpdFontFamily::ITALIC;
+            indent = 15;
+          } else {
+            marker = '\7';
+            style = EpdFontFamily::REGULAR;
+            indent = 0;
+          }
+        }
+        
+        lastWasSpace = true;
         continue;
       }
+      
+      // 3. Handle HTML character entities
+      if (buffer[i] == '&') {
+        size_t entEnd = i;
+        while (entEnd < chunkSize && entEnd - i < 10 && buffer[entEnd] != ';') {
+          entEnd++;
+        }
+        if (entEnd < chunkSize && buffer[entEnd] == ';') {
+          std::string entity(reinterpret_cast<char*>(buffer + i + 1), entEnd - i - 1);
+          int code = 0;
+          bool decoded = false;
+          
+          if (!entity.empty() && entity[0] == '#') {
+            decoded = true;
+            if (entity.length() > 2 && (entity[1] == 'x' || entity[1] == 'X')) {
+              // Hexadecimal
+              for (size_t j = 2; j < entity.length(); j++) {
+                char ch = entity[j];
+                if (ch >= '0' && ch <= '9') code = code * 16 + (ch - '0');
+                else if (ch >= 'a' && ch <= 'f') code = code * 16 + (ch - 'a' + 10);
+                else if (ch >= 'A' && ch <= 'F') code = code * 16 + (ch - 'A' + 10);
+              }
+            } else {
+              // Decimal
+              for (size_t j = 1; j < entity.length(); j++) {
+                char ch = entity[j];
+                if (ch >= '0' && ch <= '9') {
+                  code = code * 10 + (ch - '0');
+                }
+              }
+            }
+          } else {
+            // Named entities
+            if (entity == "nbsp") { code = 32; decoded = true; }
+            else if (entity == "amp") { code = 38; decoded = true; }
+            else if (entity == "lt") { code = 60; decoded = true; }
+            else if (entity == "gt") { code = 62; decoded = true; }
+            else if (entity == "quot") { code = 34; decoded = true; }
+            else if (entity == "apos" || entity == "#39") { code = 39; decoded = true; }
+            else if (entity == "ldquo") { code = 8220; decoded = true; }
+            else if (entity == "rdquo") { code = 8221; decoded = true; }
+            else if (entity == "lsquo") { code = 8216; decoded = true; }
+            else if (entity == "rsquo") { code = 8217; decoded = true; }
+            else if (entity == "ndash") { code = 8211; decoded = true; }
+            else if (entity == "mdash") { code = 8212; decoded = true; }
+            else if (entity == "hellip") { code = 8230; decoded = true; }
+            else if (entity == "euro") { code = 8364; decoded = true; }
+            else if (entity == "copy") { code = 169; decoded = true; }
+            else if (entity == "reg") { code = 174; decoded = true; }
+            else if (entity == "trade") { code = 8482; decoded = true; }
+          }
+          
+          if (decoded && code > 0) {
+            std::string utf8_char = "";
+            if (code <= 0x7F) {
+              utf8_char += static_cast<char>(code);
+            } else if (code <= 0x7FF) {
+              utf8_char += static_cast<char>(0xC0 | ((code >> 6) & 0x1F));
+              utf8_char += static_cast<char>(0x80 | (code & 0x3F));
+            } else if (code <= 0xFFFF) {
+              utf8_char += static_cast<char>(0xE0 | ((code >> 12) & 0x0F));
+              utf8_char += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+              utf8_char += static_cast<char>(0x80 | (code & 0x3F));
+            } else if (code <= 0x10FFFF) {
+              utf8_char += static_cast<char>(0xF0 | ((code >> 18) & 0x07));
+              utf8_char += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
+              utf8_char += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+              utf8_char += static_cast<char>(0x80 | (code & 0x3F));
+            }
+            
+            for (char uc : utf8_char) {
+              if (uc == ' ') {
+                if (!lastWasSpace) {
+                  cleanLine += ' ';
+                  lastWasSpace = true;
+                }
+              } else {
+                cleanLine += uc;
+                lastWasSpace = false;
+              }
+            }
+            i = entEnd + 1;
+            continue;
+          }
+        }
+      }
 
+      char c = buffer[i];
       if (isspace(c)) {
         if (!lastWasSpace) {
           cleanLine += ' ';

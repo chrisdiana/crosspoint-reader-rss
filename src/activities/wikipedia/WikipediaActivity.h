@@ -3,6 +3,8 @@
 #include "activities/Activity.h"
 #include <string>
 #include <vector>
+#include <atomic>
+#include <functional>
 
 enum class WikiState {
   OfflineList,
@@ -32,12 +34,23 @@ class WikipediaActivity final : public Activity {
   std::string articleToFetch;
   std::string errorMessage;
 
+  void* fetchTaskHandle = nullptr;
+  std::atomic<bool> cancelFetch{false};
+  bool wifiWasUsed = false;
+  bool pendingUpdateSearch = false;
+  bool pendingUpdateArticle = false;
+  bool backgroundFetchFailed = false;
+  bool isSearchTask = false;
+  std::vector<std::string> bgSearchResults;
+
   void loadOfflineArticlesList();
-  void ensureWifiConnected();
-  void doSearch();
-  void doFetchArticle();
+  void performBackgroundSearch();
+  void performBackgroundFetchArticle();
 
  public:
+  void runBackgroundFetch();
+  bool fetchSearchData();
+  bool fetchArticleData();
   explicit WikipediaActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : Activity("Wikipedia", renderer, mappedInput) {}
 

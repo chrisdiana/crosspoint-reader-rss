@@ -1050,33 +1050,5 @@ void BaseTheme::drawKeyboardKey(const GfxRenderer& renderer, Rect rect, const ch
 }
 
 void BaseTheme::drawClock(const GfxRenderer& renderer, Rect rect) const {
-  time_t now = time(nullptr);
-  struct tm timeinfo;
-  localtime_r(&now, &timeinfo);
-  char timeStr[6];
-  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
-
-  const int clockHeight = 11;
-  const int clockWidth = 11;
-  const int spacing = 4;
-  const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, timeStr);
-  const int totalWidth = clockWidth + spacing + textWidth;
-
-  const int centerX = rect.x + rect.width / 2;
-  const int startX = centerX - totalWidth / 2;
-  const int clockX = startX;
-  const int clockY = rect.y + (rect.height - clockHeight) / 2;
-  const int textX = clockX + clockWidth + spacing;
-  const int textY = rect.y + (rect.height - renderer.getLineHeight(SMALL_FONT_ID)) / 2;
-
-  // Draw smartwatch / clock outline (rounded rectangle with radius 3)
-  renderer.drawRoundedRect(clockX, clockY, clockWidth, clockHeight, 1, 3, true);
-  // Center dot
-  renderer.drawPixel(clockX + 5, clockY + 5, true);
-  // Hands: minute hand up, hour hand right
-  renderer.drawLine(clockX + 5, clockY + 5, clockX + 5, clockY + 2, true);
-  renderer.drawLine(clockX + 5, clockY + 5, clockX + 8, clockY + 5, true);
-
-  // Draw time text
-  renderer.drawText(SMALL_FONT_ID, textX, textY, timeStr, true);
+  // Disabled globally: time is incorrect
 }

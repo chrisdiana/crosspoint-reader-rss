@@ -9,8 +9,9 @@
 
 #include "MappedInputManager.h"
 #include "activities/ActivityManager.h"
-#include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/WifiConnectHelper.h"
+#include "activities/network/WifiSelectionActivity.h"
+#include "SilentRestart.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
@@ -416,7 +417,7 @@ bool fetchWeather(double lat, double lon, double &temp, double &windspeed,
                   int &weathercode, std::string &timeStr) {
   char url[256];
   snprintf(url, sizeof(url),
-           "https://api.open-meteo.com/v1/"
+           "http://api.open-meteo.com/v1/"
            "forecast?latitude=%.4f&longitude=%.4f&current_weather=true",
            lat, lon);
   std::string response;
@@ -571,18 +572,25 @@ static void weatherFetchTaskFunc(void *param) {
 } // namespace
 
 void WeatherActivity::runBackgroundFetch() {
-  if (WiFi.status() != WL_CONNECTED) {
-    WifiConnectHelper::ensureWifiConnected();
-  }
-
   if (WiFi.status() == WL_CONNECTED) {
+    // Add a stabilization delay for DNS resolution
+    delay(500);
+
     double lat = CITIES[selectedCityIndex].lat;
     double lon = CITIES[selectedCityIndex].lon;
-    if (fetchWeather(lat, lon, fetchedTemp, fetchedWindspeed,
-                     fetchedWeatherCode, fetchedTimeStr)) {
-      backgroundFetchSuccess = true;
-    } else {
-      backgroundFetchSuccess = false;
+
+    int fetchRetries = 3;
+    backgroundFetchSuccess = false;
+    while (fetchRetries > 0) {
+      if (fetchWeather(lat, lon, fetchedTemp, fetchedWindspeed,
+                       fetchedWeatherCode, fetchedTimeStr)) {
+        backgroundFetchSuccess = true;
+        break;
+      }
+      fetchRetries--;
+      if (fetchRetries > 0) {
+        delay(1000);
+      }
     }
   } else {
     backgroundFetchSuccess = false;
@@ -602,14 +610,22 @@ void WeatherActivity::onEnter() {
   if (loadConfig(selectedCityIndex, cityName)) {
     if (loadCache(cityName, temp, windspeed, weatherCode, timeStr)) {
       weatherLoaded = true;
-      offlineMode = true;
       state = WeatherState::ShowWeather;
+      if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+        performFetch();
+      }
     } else {
       weatherLoaded = false;
       errorMessage = "No cached weather data. Fetching...";
       state = WeatherState::Loading;
+      requestUpdate();
+      ensureWifiConnected([this]() {
+        performFetch();
+      }, [this]() {
+        state = WeatherState::SelectCity;
+        requestUpdate();
+      });
     }
-    performFetch();
   } else {
     state = WeatherState::SelectCity;
     selectedCityIndex = 0;
@@ -617,20 +633,25 @@ void WeatherActivity::onEnter() {
   requestUpdate();
 }
 
+
+
 void WeatherActivity::onExit() {
   Activity::onExit();
-  if (fetchTaskHandle != nullptr) {
-    int waitCount = 0;
-    while (fetchTaskHandle != nullptr && waitCount < 100) {
-      delay(10);
-      waitCount++;
-    }
-    if (fetchTaskHandle != nullptr) {
-      TaskHandle_t tempHandle = static_cast<TaskHandle_t>(fetchTaskHandle);
-      fetchTaskHandle = nullptr;
-      vTaskDelete(tempHandle);
-    }
+  cancelFetchTask();
+  if (WiFi.getMode() != WIFI_MODE_NULL) {
+    WiFi.disconnect(false);
+    delay(30);
+    silentRestart();
   }
+}
+
+void WeatherActivity::cancelFetchTask() {
+  if (fetchTaskHandle != nullptr) {
+    TaskHandle_t tempHandle = static_cast<TaskHandle_t>(fetchTaskHandle);
+    fetchTaskHandle = nullptr;
+    vTaskDelete(tempHandle);
+  }
+  pendingUpdateWeather = false;
 }
 
 void WeatherActivity::loop() {
@@ -642,7 +663,6 @@ void WeatherActivity::loop() {
       windspeed = fetchedWindspeed;
       weatherCode = fetchedWeatherCode;
       timeStr = fetchedTimeStr;
-      offlineMode = false;
       weatherLoaded = true;
       saveCache(cityName, temp, windspeed, weatherCode, timeStr);
       if (state == WeatherState::Loading) {
@@ -655,8 +675,8 @@ void WeatherActivity::loop() {
         if (state == WeatherState::Loading) {
           state = WeatherState::ShowWeather;
         }
-        requestUpdate();
       }
+      requestUpdate();
     }
   }
 
@@ -677,38 +697,43 @@ void WeatherActivity::loop() {
       saveConfig(selectedCityIndex, cityName);
       if (loadCache(cityName, temp, windspeed, weatherCode, timeStr)) {
         weatherLoaded = true;
-        offlineMode = true;
         state = WeatherState::ShowWeather;
+        requestUpdate();
+        if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
+          performFetch();
+        }
       } else {
         weatherLoaded = false;
         errorMessage = "No cached weather data. Fetching...";
         state = WeatherState::Loading;
+        requestUpdate();
+        ensureWifiConnected([this]() {
+          performFetch();
+        }, [this]() {
+          state = WeatherState::SelectCity;
+          requestUpdate();
+        });
       }
-      performFetch();
-      requestUpdate();
     }
   } else if (state == WeatherState::ShowWeather) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-      if (!weatherLoaded) {
-        state = WeatherState::Loading;
-      }
-      performFetch();
+      state = WeatherState::Loading;
       requestUpdate();
+      ensureWifiConnected([this]() {
+        performFetch();
+      }, [this]() {
+        state = WeatherState::ShowWeather;
+        requestUpdate();
+      });
     } else if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
       state = WeatherState::SelectCity;
       requestUpdate();
-    } else if ((!weatherLoaded || offlineMode) &&
-               mappedInput.wasReleased(MappedInputManager::Button::Right)) {
-      activityManager.pushActivity(
-          std::make_unique<WifiSelectionActivity>(renderer, mappedInput));
     }
   }
 }
 
 void WeatherActivity::performFetch() {
-  if (fetchTaskHandle != nullptr)
-    return;
-  pendingUpdateWeather = false;
+  cancelFetchTask();
   backgroundFetchSuccess = false;
   xTaskCreate(weatherFetchTaskFunc, "weather_fetch", 8192, this, 5,
               (TaskHandle_t *)&fetchTaskHandle);
@@ -737,7 +762,7 @@ void WeatherActivity::render(RenderLock &&) {
         CITY_COUNT, selectedCityIndex,
         [](int index) { return std::string(CITIES[index].name); },
         [](int index) { return UIIcon::Library; },
-        9);
+        18);
 
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT),
                                               tr(STR_DIR_UP), tr(STR_DIR_DOWN));
@@ -802,39 +827,34 @@ void WeatherActivity::render(RenderLock &&) {
 
       // Wind Speed
       char windBuf[64];
-      snprintf(windBuf, sizeof(windBuf), "Wind: %.1f km/h", windspeed);
+      double windspeedMph = windspeed * 0.621371;
+      snprintf(windBuf, sizeof(windBuf), "Wind: %.1f km/h / %.1f mph", windspeed, windspeedMph);
       renderer.drawCenteredText(NOTOSANS_12_FONT_ID, cardY + 275, windBuf, true,
                                 EpdFontFamily::REGULAR);
 
       // Updated Time
       char timeBuf[64];
-      std::string formattedTime = timeStr;
-      size_t tPos = formattedTime.find('T');
-      if (tPos != std::string::npos) {
-        formattedTime[tPos] = ' ';
+      if (fetchTaskHandle != nullptr) {
+        snprintf(timeBuf, sizeof(timeBuf), "Refreshing...");
+      } else {
+        std::string formattedTime = timeStr;
+        size_t tPos = formattedTime.find('T');
+        if (tPos != std::string::npos) {
+          formattedTime[tPos] = ' ';
+        }
+        snprintf(timeBuf, sizeof(timeBuf), "Updated: %s", formattedTime.c_str());
       }
-      snprintf(timeBuf, sizeof(timeBuf), "Updated: %s", formattedTime.c_str());
       renderer.drawCenteredText(SMALL_FONT_ID, cardY + 315, timeBuf, true,
                                 EpdFontFamily::REGULAR);
 
-      // Online/Offline Status
-      if (offlineMode) {
-        renderer.drawCenteredText(SMALL_FONT_ID, cardY + 345,
-                                  "Offline (Cached Data)", true,
-                                  EpdFontFamily::REGULAR);
-      } else {
-        renderer.drawCenteredText(SMALL_FONT_ID, cardY + 345, "Online Mode",
-                                  true, EpdFontFamily::REGULAR);
-      }
     } else {
       int textY = cardY + cardH / 2 - renderer.getLineHeight(UI_10_FONT_ID) / 2;
       renderer.drawCenteredText(UI_10_FONT_ID, textY, errorMessage.c_str(),
                                 true, EpdFontFamily::BOLD);
     }
 
-    const char *btn4Label = (!weatherLoaded || offlineMode) ? "WiFi" : nullptr;
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), "Refresh",
-                                              "City", btn4Label);
+                                              "City", nullptr);
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3,
                         labels.btn4);
   }

@@ -4,6 +4,8 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "activities/util/WifiConnectHelper.h"
+#include "activities/network/WifiSelectionActivity.h"
+#include "SilentRestart.h"
 #include "activities/util/DownloadWatchdog.h"
 #include "activities/reader/TxtReaderActivity.h"
 #include <Txt.h>
@@ -385,6 +387,13 @@ bool parseAndSaveWikipediaArticle(const std::string& tempJsonPath, std::string& 
 
   return true;
 }
+
+static void wikiFetchTaskFunc(void* param) {
+  WikipediaActivity* activity = static_cast<WikipediaActivity*>(param);
+  activity->runBackgroundFetch();
+  // Activity cleans up tasks via cancelFetch and runBackgroundFetch
+  vTaskDelete(nullptr);
+}
 } // namespace
 
 void WikipediaActivity::onEnter() {
@@ -400,10 +409,31 @@ void WikipediaActivity::onEnter() {
   selectedIndex = 0;
   listScrollOffset = 0;
   wifiConnecting = false;
+  
+  fetchTaskHandle = nullptr;
+  pendingUpdateSearch = false;
+  pendingUpdateArticle = false;
+  backgroundFetchFailed = false;
+  isSearchTask = false;
+
   requestUpdate();
 }
 
-void WikipediaActivity::onExit() { Activity::onExit(); }
+void WikipediaActivity::onExit() {
+  Activity::onExit();
+  if (fetchTaskHandle != nullptr) {
+    TaskHandle_t tempHandle = static_cast<TaskHandle_t>(fetchTaskHandle);
+    fetchTaskHandle = nullptr;
+    vTaskDelete(tempHandle);
+  }
+  if (WiFi.getMode() != WIFI_MODE_NULL) {
+    WiFi.disconnect(false);
+    delay(30);
+  }
+  if (wifiWasUsed) {
+    silentRestart();
+  }
+}
 
 void WikipediaActivity::loadOfflineArticlesList() {
   offlineArticles.clear();
@@ -423,41 +453,92 @@ void WikipediaActivity::loadOfflineArticlesList() {
 
 
 
-void WikipediaActivity::ensureWifiConnected() {
-  if (WiFi.status() != WL_CONNECTED) {
-    GUI.drawPopup(renderer, "Connecting to WiFi...");
-    WifiConnectHelper::ensureWifiConnected();
+void WikipediaActivity::performBackgroundSearch() {
+  if (fetchTaskHandle != nullptr) return;
+  state = WikiState::Loading;
+  backgroundFetchFailed = false;
+  pendingUpdateSearch = false;
+  pendingSearch = false;
+  isSearchTask = true;
+  requestUpdate();
+
+  xTaskCreate(wikiFetchTaskFunc, "wiki_fetch", 8192, this, 5, (TaskHandle_t*)&fetchTaskHandle);
+}
+
+void WikipediaActivity::performBackgroundFetchArticle() {
+  if (fetchTaskHandle != nullptr) return;
+  state = WikiState::Loading;
+  backgroundFetchFailed = false;
+  pendingUpdateArticle = false;
+  pendingArticle = false;
+  isSearchTask = false;
+  requestUpdate();
+
+  xTaskCreate(wikiFetchTaskFunc, "wiki_fetch", 8192, this, 5, (TaskHandle_t*)&fetchTaskHandle);
+}
+
+void WikipediaActivity::runBackgroundFetch() {
+  DownloadWatchdog::start(35000);
+  errorMessage.clear();
+
+  bool success = false;
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!WifiConnectHelper::waitForTimeSync()) {
+      errorMessage = "Clock sync failed. HTTPS requests may fail.";
+    }
+    int retries = 3;
+    while (retries-- > 0) {
+      if (isSearchTask) {
+        success = fetchSearchData();
+      } else {
+        success = fetchArticleData();
+      }
+      if (success) {
+        break;
+      }
+      if (retries > 0) {
+        delay(1500);
+      }
+    }
+  } else {
+    errorMessage = "WiFi disconnected during fetch.";
+  }
+
+  DownloadWatchdog::stop();
+
+  if (DownloadWatchdog::gotTimeout) {
+    LOG_ERR("WIKI", "Background fetch timed out!");
+    backgroundFetchFailed = true;
+    errorMessage = "Request timed out.";
+  } else if (!success) {
+    backgroundFetchFailed = true;
+    if (errorMessage.empty()) {
+      errorMessage = isSearchTask ? "Search request failed." : "Failed to download article.";
+    }
+  } else {
+    backgroundFetchFailed = false;
+    errorMessage.clear();
+  }
+
+  if (isSearchTask) {
+    pendingUpdateSearch = true;
+  } else {
+    pendingUpdateArticle = true;
   }
 }
 
-void WikipediaActivity::doSearch() {
-  ensureWifiConnected();
-  if (WiFi.status() != WL_CONNECTED) {
-    errorMessage = "Could not connect to WiFi.";
-    searchResults.clear();
-    return;
-  }
-
+bool WikipediaActivity::fetchSearchData() {
   std::string url =
       "https://en.wikipedia.org/w/api.php?action=opensearch&search=" +
       urlEncode(searchQuery) + "&limit=10&namespace=0&format=json";
   const char *tempPath = "/apps/wikipedia/search.tmp";
   
-  DownloadWatchdog::start(15000);
-  auto result = HttpDownloader::downloadToFile(url.c_str(), tempPath, nullptr);
-  DownloadWatchdog::stop();
-
-  if (DownloadWatchdog::gotTimeout) {
-    LOG_ERR("WIKI", "Search timed out! Crashing and returning home.");
-    activityManager.goHome();
-    return;
-  }
-
+  std::string errorDetail;
+  auto result = HttpDownloader::downloadToFile(url.c_str(), tempPath, nullptr, nullptr, "", "", nullptr, nullptr, &errorDetail);
   if (result != HttpDownloader::OK) {
-    errorMessage = "Search request failed.";
-    searchResults.clear();
+    errorMessage = "Search HTTP Error " + std::to_string(result) + ": " + (errorDetail.empty() ? "Unknown" : errorDetail);
     Storage.remove(tempPath);
-    return;
+    return false;
   }
 
   HalFile file;
@@ -471,49 +552,31 @@ void WikipediaActivity::doSearch() {
       JsonArray arr = doc.as<JsonArray>();
       if (arr.size() >= 2) {
         JsonArray titles = arr[1].as<JsonArray>();
-        searchResults.clear();
+        bgSearchResults.clear();
         for (JsonVariant val : titles) {
-          searchResults.push_back(val.as<std::string>());
+          bgSearchResults.push_back(val.as<std::string>());
         }
-        errorMessage.clear();
-      } else {
-        errorMessage = "Invalid response format.";
+        return true;
       }
-    } else {
-      errorMessage = "Failed to parse JSON.";
     }
   } else {
-    errorMessage = "Failed to open temporary file.";
     Storage.remove(tempPath);
   }
+  return false;
 }
 
-void WikipediaActivity::doFetchArticle() {
-  ensureWifiConnected();
-  if (WiFi.status() != WL_CONNECTED) {
-    errorMessage = "Could not connect to WiFi.";
-    return;
-  }
-
+bool WikipediaActivity::fetchArticleData() {
   std::string url = "https://en.wikipedia.org/w/"
                     "api.php?action=query&prop=extracts&explaintext=&titles=" +
                     urlEncode(articleToFetch) + "&format=json&redirects=1";
   const char *tempPath = "/apps/wikipedia/article.tmp";
   
-  DownloadWatchdog::start(15000);
-  auto result = HttpDownloader::downloadToFile(url.c_str(), tempPath, nullptr);
-  DownloadWatchdog::stop();
-
-  if (DownloadWatchdog::gotTimeout) {
-    LOG_ERR("WIKI", "Article fetch timed out! Crashing and returning home.");
-    activityManager.goHome();
-    return;
-  }
-
+  std::string errorDetail;
+  auto result = HttpDownloader::downloadToFile(url.c_str(), tempPath, nullptr, nullptr, "", "", nullptr, nullptr, &errorDetail);
   if (result != HttpDownloader::OK) {
-    errorMessage = "Failed to download article.";
+    errorMessage = "Article HTTP Error " + std::to_string(result) + ": " + (errorDetail.empty() ? "Unknown" : errorDetail);
     Storage.remove(tempPath);
-    return;
+    return false;
   }
 
   std::string title;
@@ -523,21 +586,40 @@ void WikipediaActivity::doFetchArticle() {
       currentArticleTitle = title;
       currentArticleText.clear();
       articleLines.clear();
-      errorMessage.clear();
-    } else {
-      errorMessage = "Article not found.";
+      return true;
     }
   } else {
     Storage.remove(tempPath);
-    errorMessage = "Failed to parse article JSON.";
   }
+  return false;
 }
 
 void WikipediaActivity::loop() {
 
   if (pendingSearch) {
-    doSearch();
-    pendingSearch = false;
+    performBackgroundSearch();
+    return;
+  }
+
+  if (pendingArticle) {
+    performBackgroundFetchArticle();
+    return;
+  }
+
+  if (pendingUpdateSearch) {
+    pendingUpdateSearch = false;
+    fetchTaskHandle = nullptr;
+    if (DownloadWatchdog::gotTimeout) {
+      LOG_ERR("WIKI", "Watchdog timeout! Crashing to home screen.");
+      activityManager.goHome();
+      return;
+    }
+    if (!backgroundFetchFailed) {
+      searchResults = std::move(bgSearchResults);
+      errorMessage.clear();
+    } else {
+      searchResults.clear();
+    }
     selectedIndex = 0;
     listScrollOffset = 0;
     state = WikiState::SearchResults;
@@ -545,10 +627,15 @@ void WikipediaActivity::loop() {
     return;
   }
 
-  if (pendingArticle) {
-    doFetchArticle();
-    pendingArticle = false;
-    if (errorMessage.empty()) {
+  if (pendingUpdateArticle) {
+    pendingUpdateArticle = false;
+    fetchTaskHandle = nullptr;
+    if (DownloadWatchdog::gotTimeout) {
+      LOG_ERR("WIKI", "Watchdog timeout! Crashing to home screen.");
+      activityManager.goHome();
+      return;
+    }
+    if (!backgroundFetchFailed && errorMessage.empty()) {
       state = WikiState::SearchResults;
       std::string filepath = getArticleFilePath(currentArticleTitle);
       auto txt = std::unique_ptr<Txt>(new Txt(filepath, "/.crosspoint"));
@@ -563,7 +650,22 @@ void WikipediaActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    if (state == WikiState::ArticleView) {
+    if (state == WikiState::Loading) {
+      if (fetchTaskHandle != nullptr) {
+        TaskHandle_t tempHandle = static_cast<TaskHandle_t>(fetchTaskHandle);
+        fetchTaskHandle = nullptr;
+        vTaskDelete(tempHandle);
+      }
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      if (!searchResults.empty()) {
+        state = WikiState::SearchResults;
+      } else {
+        state = WikiState::OfflineList;
+        loadOfflineArticlesList();
+      }
+      requestUpdate();
+    } else if (state == WikiState::ArticleView) {
       if (searchResults.empty()) {
         state = WikiState::OfflineList;
         loadOfflineArticlesList();
@@ -602,10 +704,19 @@ void WikipediaActivity::loop() {
                 if (keyboardResult && !keyboardResult->text.empty()) {
                   searchQuery = keyboardResult->text;
                   state = WikiState::Loading;
-                  pendingSearch = true;
+                  requestUpdate();
+                  ensureWifiConnected([this]() {
+                    wifiWasUsed = true;
+                    pendingSearch = true;
+                    requestUpdate();
+                  }, [this]() {
+                    state = WikiState::OfflineList;
+                    requestUpdate();
+                  });
                 }
+              } else {
+                requestUpdate();
               }
-              requestUpdate();
             });
       } else {
         std::string title = offlineArticles[selectedIndex - 1];
@@ -624,9 +735,16 @@ void WikipediaActivity::loop() {
       if (mappedInput.wasReleased(MappedInputManager::Button::Right) ||
           mappedInput.wasReleased(MappedInputManager::Button::Down)) {
         state = WikiState::Loading;
-        pendingSearch = true;
         errorMessage.clear();
         requestUpdate();
+        ensureWifiConnected([this]() {
+          wifiWasUsed = true;
+          pendingSearch = true;
+          requestUpdate();
+        }, [this]() {
+          state = WikiState::SearchResults;
+          requestUpdate();
+        });
         return;
       }
     } else if (searchResults.empty()) {
@@ -640,10 +758,19 @@ void WikipediaActivity::loop() {
                 if (keyboardResult && !keyboardResult->text.empty()) {
                   searchQuery = keyboardResult->text;
                   state = WikiState::Loading;
-                  pendingSearch = true;
+                  requestUpdate();
+                  ensureWifiConnected([this]() {
+                    wifiWasUsed = true;
+                    pendingSearch = true;
+                    requestUpdate();
+                  }, [this]() {
+                    state = WikiState::SearchResults;
+                    requestUpdate();
+                  });
                 }
+              } else {
+                requestUpdate();
               }
-              requestUpdate();
             });
       }
     } else {
@@ -665,8 +792,15 @@ void WikipediaActivity::loop() {
         } else {
           articleToFetch = title;
           state = WikiState::Loading;
-          pendingArticle = true;
           requestUpdate();
+          ensureWifiConnected([this]() {
+            wifiWasUsed = true;
+            pendingArticle = true;
+            requestUpdate();
+          }, [this]() {
+            state = WikiState::SearchResults;
+            requestUpdate();
+          });
         }
       }
     }

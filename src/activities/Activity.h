@@ -46,6 +46,11 @@ class Activity {
   virtual bool isReaderActivity() const { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 
+  // Unified abstraction to ensure WiFi is connected before performing network requests.
+  // It will attempt to connect to the default network silently, and if that fails,
+  // it will launch WifiSelectionActivity to prompt the user.
+  void ensureWifiConnected(std::function<void()> onConnected, std::function<void()> onCancelled = nullptr);
+
   // Start a new activity without destroying the current one
   // Note: requestUpdate() will be invoked automatically once resultHandler finishes
   void startActivityForResult(std::unique_ptr<Activity>&& activity, ActivityResultHandler resultHandler);
