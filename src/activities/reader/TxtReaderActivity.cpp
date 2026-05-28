@@ -154,82 +154,78 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>
     return false;
   }
 
-  // Read a chunk from file
-  size_t chunkSize = std::min(CHUNK_SIZE, fileSize - offset);
-  auto* buffer = static_cast<uint8_t*>(malloc(chunkSize + 1));
-  if (!buffer) {
-    LOG_ERR("TRS", "Failed to allocate %zu bytes", chunkSize);
-    return false;
-  }
-
-  if (!txt->readContent(buffer, offset, chunkSize)) {
-    free(buffer);
-    return false;
-  }
-  buffer[chunkSize] = '\0';
-
-  // Prime the SD card font's advance table with this chunk's codepoints.
-  // Without this, every getTextAdvanceX() call in the wrap loop below triggers
-  // on-demand glyph loads through the 8-slot overflow ring buffer, which
-  // thrashes for any text with more than 8 unique chars (i.e. all English),
-  // floods the heap with short-lived bitmap allocations, and eventually
-  // corrupts FreeRTOS state. The advance table persists across calls per
-  // font, so the cost amortizes to ~ASCII-size after the first chunk.
-  if (renderer.isSdCardFont(cachedFontId)) {
-    renderer.ensureSdCardFontReady(cachedFontId, reinterpret_cast<const char*>(buffer), /*styleMask=*/0x01);
-  }
-
-  // Parse lines from buffer
-  size_t pos = 0;
-
   bool isHtml = FsHelpers::checkFileExtension(txt->getPath(), ".html") ||
                 FsHelpers::checkFileExtension(txt->getPath(), ".htm");
 
   if (isHtml) {
-    size_t i = 0;
+    size_t currentOffset = offset;
+    size_t bufferPos = 0;
+    size_t bytesReadInChunk = 0;
+    auto* buffer = static_cast<uint8_t*>(malloc(CHUNK_SIZE + 1));
+    if (!buffer) {
+      LOG_ERR("TRS", "Failed to allocate %zu bytes", CHUNK_SIZE);
+      return false;
+    }
+
+    auto getChar = [&]() -> int {
+      if (bufferPos >= bytesReadInChunk) {
+        if (currentOffset >= fileSize) return -1;
+        size_t toRead = std::min(CHUNK_SIZE, fileSize - currentOffset);
+        if (!txt->readContent(buffer, currentOffset, toRead)) return -1;
+        buffer[toRead] = '\0';
+        
+        if (renderer.isSdCardFont(cachedFontId)) {
+          renderer.ensureSdCardFontReady(cachedFontId, reinterpret_cast<const char*>(buffer), 0x01);
+        }
+        
+        bytesReadInChunk = toRead;
+        currentOffset += toRead;
+        bufferPos = 0;
+      }
+      return buffer[bufferPos++];
+    };
+
     std::string cleanLine = "";
     char marker = '\7';
     EpdFontFamily::Style style = EpdFontFamily::REGULAR;
     int indent = 0;
     bool lastWasSpace = true;
-
-    // Track active tags
-    bool insideH1 = false;
-    bool insideH2 = false;
-    bool insideH3 = false;
     bool insideBlockquote = false;
 
-    while (i < chunkSize && static_cast<int>(outLines.size()) < linesPerPage) {
-      // 1. Handle HTML Comments: <!-- ... -->
-      if (i + 4 <= chunkSize && 
-          buffer[i] == '<' && buffer[i+1] == '!' && buffer[i+2] == '-' && buffer[i+3] == '-') {
-        i += 4;
-        while (i < chunkSize) {
-          if (i + 3 <= chunkSize && buffer[i] == '-' && buffer[i+1] == '-' && buffer[i+2] == '>') {
-            i += 3;
-            break;
-          }
-          i++;
-        }
-        continue;
-      }
+    int c;
+    while (static_cast<int>(outLines.size()) < linesPerPage && (c = getChar()) != -1) {
+      if (c == '<') {
+        int c1 = getChar();
+        if (c1 == -1) break;
 
-      // 2. Handle Tags
-      if (buffer[i] == '<') {
-        size_t tagStart = i;
-        size_t tagEnd = i;
-        while (tagEnd < chunkSize && buffer[tagEnd] != '>') {
-          tagEnd++;
+        if (c1 == '!') {
+          int c2 = getChar();
+          int c3 = getChar();
+          if (c2 == '-' && c3 == '-') {
+            // HTML Comment
+            int dashCount = 0;
+            int cm;
+            while ((cm = getChar()) != -1) {
+              if (cm == '-') dashCount++;
+              else if (cm == '>' && dashCount >= 2) break;
+              else dashCount = 0;
+            }
+            continue;
+          } else {
+             // Not a comment, ignore DOCTYPE etc.
+             int cm;
+             while ((cm = getChar()) != -1 && cm != '>') {}
+             continue;
+          }
         }
-        
-        if (tagEnd >= chunkSize) {
-          i = chunkSize;
-          break;
+
+        std::string tagContent;
+        tagContent += static_cast<char>(c1);
+        int tc;
+        while ((tc = getChar()) != -1 && tc != '>') {
+          if (tagContent.length() < 256) tagContent += static_cast<char>(tc);
         }
-        
-        std::string tagContent(reinterpret_cast<char*>(buffer + tagStart + 1), tagEnd - tagStart - 1);
-        i = tagEnd + 1; // Move past '>'
-        
+
         std::string tagName = "";
         size_t firstSpace = tagContent.find_first_of(" \t\r\n/");
         if (firstSpace != std::string::npos) {
@@ -238,122 +234,88 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>
           tagName = tagContent;
         }
         std::transform(tagName.begin(), tagName.end(), tagName.begin(), ::tolower);
-        
+
         bool isClosing = (!tagContent.empty() && tagContent[0] == '/');
         if (isClosing && !tagName.empty() && tagName[0] == '/') {
           tagName = tagName.substr(1);
         }
-        
-        // If it is a style/script/head tag, skip content until the closing tag
-        if (!isClosing && (tagName == "style" || tagName == "script" || tagName == "head")) {
-          std::string closeTagPattern = "</" + tagName + ">";
-          while (i < chunkSize) {
-            if (i + closeTagPattern.length() <= chunkSize) {
-              std::string testStr(reinterpret_cast<char*>(buffer + i), closeTagPattern.length());
-              std::transform(testStr.begin(), testStr.end(), testStr.begin(), ::tolower);
-              if (testStr == closeTagPattern) {
-                i += closeTagPattern.length();
-                break;
-              }
+
+        // Fast path for skipping content tags
+        if (!isClosing && (tagName == "style" || tagName == "script" || tagName == "head" || tagName == "svg" || tagName == "nav" || tagName == "noscript" || tagName == "iframe")) {
+          std::string closeTag = "</" + tagName + ">";
+          size_t matchIdx = 0;
+          int sc;
+          while ((sc = getChar()) != -1) {
+            if (tolower(sc) == closeTag[matchIdx]) {
+              matchIdx++;
+              if (matchIdx == closeTag.length()) break;
+            } else {
+              if (tolower(sc) == closeTag[0]) matchIdx = 1;
+              else matchIdx = 0;
             }
-            i++;
           }
           continue;
         }
-        
-        // Process standard structural/styling tags
+
+        // Structural tags
         if (tagName == "h1") {
-          if (!cleanLine.empty()) {
-            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-            cleanLine.clear();
-          }
-          insideH1 = !isClosing;
+          if (!cleanLine.empty()) { wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines); cleanLine.clear(); }
           marker = isClosing ? '\7' : '\1';
           style = isClosing ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
           indent = 0;
         } else if (tagName == "h2") {
-          if (!cleanLine.empty()) {
-            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-            cleanLine.clear();
-          }
-          insideH2 = !isClosing;
+          if (!cleanLine.empty()) { wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines); cleanLine.clear(); }
           marker = isClosing ? '\7' : '\2';
           style = isClosing ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
           indent = 0;
         } else if (tagName == "h3") {
-          if (!cleanLine.empty()) {
-            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-            cleanLine.clear();
-          }
-          insideH3 = !isClosing;
+          if (!cleanLine.empty()) { wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines); cleanLine.clear(); }
           marker = isClosing ? '\7' : '\3';
           style = isClosing ? EpdFontFamily::REGULAR : EpdFontFamily::BOLD;
           indent = 0;
         } else if (tagName == "blockquote") {
-          if (!cleanLine.empty()) {
-            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-            cleanLine.clear();
-          }
+          if (!cleanLine.empty()) { wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines); cleanLine.clear(); }
           insideBlockquote = !isClosing;
           marker = isClosing ? '\7' : '\4';
           style = isClosing ? EpdFontFamily::REGULAR : EpdFontFamily::ITALIC;
           indent = isClosing ? 0 : 15;
         } else if (tagName == "li") {
-          if (!cleanLine.empty()) {
-            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-            cleanLine.clear();
-          }
-          if (!isClosing) {
-            marker = '\5';
-            indent = 15;
-            cleanLine = "•  ";
-          } else {
-            marker = '\7';
-            indent = 0;
-          }
+          if (!cleanLine.empty()) { wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines); cleanLine.clear(); }
+          if (!isClosing) { marker = '\5'; indent = 15; cleanLine = "•  "; } 
+          else { marker = '\7'; indent = 0; }
         } else if (tagName == "hr") {
-          if (!cleanLine.empty()) {
-            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-            cleanLine.clear();
-          }
-          std::string hrStr = "";
-          hrStr += '\6';
-          outLines.push_back(hrStr);
+          if (!cleanLine.empty()) { wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines); cleanLine.clear(); }
+          std::string hrStr = ""; hrStr += '\6'; outLines.push_back(hrStr);
         } else if (tagName == "p" || tagName == "div" || tagName == "br") {
-          if (!cleanLine.empty()) {
-            wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-            cleanLine.clear();
-          }
-          if (insideBlockquote) {
-            marker = '\4';
-            style = EpdFontFamily::ITALIC;
-            indent = 15;
-          } else {
-            marker = '\7';
-            style = EpdFontFamily::REGULAR;
-            indent = 0;
-          }
+          if (!cleanLine.empty()) { wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines); cleanLine.clear(); }
+          if (insideBlockquote) { marker = '\4'; style = EpdFontFamily::ITALIC; indent = 15; } 
+          else { marker = '\7'; style = EpdFontFamily::REGULAR; indent = 0; }
         }
-        
+
         lastWasSpace = true;
         continue;
       }
-      
-      // 3. Handle HTML character entities
-      if (buffer[i] == '&') {
-        size_t entEnd = i;
-        while (entEnd < chunkSize && entEnd - i < 10 && buffer[entEnd] != ';') {
-          entEnd++;
+
+      // Handle Entities
+      if (c == '&') {
+        std::string entity;
+        int ec;
+        bool foundSemi = false;
+        int ahead[10];
+        int aheadCount = 0;
+        while (aheadCount < 10 && (ec = getChar()) != -1) {
+          ahead[aheadCount++] = ec;
+          if (ec == ';') { foundSemi = true; break; }
         }
-        if (entEnd < chunkSize && buffer[entEnd] == ';') {
-          std::string entity(reinterpret_cast<char*>(buffer + i + 1), entEnd - i - 1);
+
+        if (foundSemi) {
+          for (int k = 0; k < aheadCount - 1; k++) entity += static_cast<char>(ahead[k]);
           int code = 0;
           bool decoded = false;
           
           if (!entity.empty() && entity[0] == '#') {
             decoded = true;
             if (entity.length() > 2 && (entity[1] == 'x' || entity[1] == 'X')) {
-              // Hexadecimal
               for (size_t j = 2; j < entity.length(); j++) {
                 char ch = entity[j];
                 if (ch >= '0' && ch <= '9') code = code * 16 + (ch - '0');
@@ -361,16 +323,12 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>
                 else if (ch >= 'A' && ch <= 'F') code = code * 16 + (ch - 'A' + 10);
               }
             } else {
-              // Decimal
               for (size_t j = 1; j < entity.length(); j++) {
                 char ch = entity[j];
-                if (ch >= '0' && ch <= '9') {
-                  code = code * 10 + (ch - '0');
-                }
+                if (ch >= '0' && ch <= '9') code = code * 10 + (ch - '0');
               }
             }
           } else {
-            // Named entities
             if (entity == "nbsp") { code = 32; decoded = true; }
             else if (entity == "amp") { code = 38; decoded = true; }
             else if (entity == "lt") { code = 60; decoded = true; }
@@ -392,269 +350,253 @@ bool TxtReaderActivity::loadPageAtOffset(size_t offset, std::vector<std::string>
           
           if (decoded && code > 0) {
             std::string utf8_char = "";
-            if (code <= 0x7F) {
-              utf8_char += static_cast<char>(code);
-            } else if (code <= 0x7FF) {
-              utf8_char += static_cast<char>(0xC0 | ((code >> 6) & 0x1F));
-              utf8_char += static_cast<char>(0x80 | (code & 0x3F));
-            } else if (code <= 0xFFFF) {
-              utf8_char += static_cast<char>(0xE0 | ((code >> 12) & 0x0F));
-              utf8_char += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
-              utf8_char += static_cast<char>(0x80 | (code & 0x3F));
-            } else if (code <= 0x10FFFF) {
-              utf8_char += static_cast<char>(0xF0 | ((code >> 18) & 0x07));
-              utf8_char += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
-              utf8_char += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
-              utf8_char += static_cast<char>(0x80 | (code & 0x3F));
-            }
+            if (code <= 0x7F) utf8_char += static_cast<char>(code);
+            else if (code <= 0x7FF) { utf8_char += static_cast<char>(0xC0 | ((code >> 6) & 0x1F)); utf8_char += static_cast<char>(0x80 | (code & 0x3F)); }
+            else if (code <= 0xFFFF) { utf8_char += static_cast<char>(0xE0 | ((code >> 12) & 0x0F)); utf8_char += static_cast<char>(0x80 | ((code >> 6) & 0x3F)); utf8_char += static_cast<char>(0x80 | (code & 0x3F)); }
+            else if (code <= 0x10FFFF) { utf8_char += static_cast<char>(0xF0 | ((code >> 18) & 0x07)); utf8_char += static_cast<char>(0x80 | ((code >> 12) & 0x3F)); utf8_char += static_cast<char>(0x80 | ((code >> 6) & 0x3F)); utf8_char += static_cast<char>(0x80 | (code & 0x3F)); }
             
             for (char uc : utf8_char) {
-              if (uc == ' ') {
-                if (!lastWasSpace) {
-                  cleanLine += ' ';
-                  lastWasSpace = true;
-                }
+              if (isspace(uc)) {
+                if (!lastWasSpace) { cleanLine += ' '; lastWasSpace = true; }
               } else {
-                cleanLine += uc;
-                lastWasSpace = false;
+                cleanLine += uc; lastWasSpace = false;
               }
             }
-            i = entEnd + 1;
             continue;
           }
         }
-      }
-
-      char c = buffer[i];
-      if (isspace(c)) {
-        if (!lastWasSpace) {
-          cleanLine += ' ';
-          lastWasSpace = true;
+        
+        cleanLine += '&'; lastWasSpace = false;
+        for (int k = 0; k < aheadCount; k++) {
+           char ac = static_cast<char>(ahead[k]);
+           if (isspace(ac)) {
+             if (!lastWasSpace) { cleanLine += ' '; lastWasSpace = true; }
+           } else {
+             cleanLine += ac; lastWasSpace = false;
+           }
         }
-      } else {
-        cleanLine += c;
-        lastWasSpace = false;
+        continue;
       }
 
-      i++;
+      if (isspace(c)) {
+        if (!lastWasSpace) { cleanLine += ' '; lastWasSpace = true; }
+      } else {
+        cleanLine += static_cast<char>(c); lastWasSpace = false;
+      }
     }
 
     if (!cleanLine.empty() && static_cast<int>(outLines.size()) < linesPerPage) {
       wrapAndPushHtmlLine(cleanLine, marker, style, indent, outLines);
-      cleanLine.clear();
     }
 
-    pos = i;
-  } else {
-    while (pos < chunkSize && static_cast<int>(outLines.size()) < linesPerPage) {
-      // Find end of line
-      size_t lineEnd = pos;
-      while (lineEnd < chunkSize && buffer[lineEnd] != '\n') {
-        lineEnd++;
+    nextOffset = currentOffset - bytesReadInChunk + bufferPos;
+    if (nextOffset > fileSize) nextOffset = fileSize;
+    free(buffer);
+    return !outLines.empty();
+  }
+
+  // Fallback for normal text / Markdown files
+  size_t chunkSize = std::min(CHUNK_SIZE, fileSize - offset);
+  auto* buffer = static_cast<uint8_t*>(malloc(chunkSize + 1));
+  if (!buffer) {
+    LOG_ERR("TRS", "Failed to allocate %zu bytes", chunkSize);
+    return false;
+  }
+
+  if (!txt->readContent(buffer, offset, chunkSize)) {
+    free(buffer);
+    return false;
+  }
+  buffer[chunkSize] = '\0';
+
+  if (renderer.isSdCardFont(cachedFontId)) {
+    renderer.ensureSdCardFontReady(cachedFontId, reinterpret_cast<const char*>(buffer), 0x01);
+  }
+
+  size_t pos = 0;
+  while (pos < chunkSize && static_cast<int>(outLines.size()) < linesPerPage) {
+    size_t lineEnd = pos;
+    while (lineEnd < chunkSize && buffer[lineEnd] != '\n') {
+      lineEnd++;
+    }
+
+    bool lineComplete = (lineEnd < chunkSize) || (offset + lineEnd >= fileSize);
+
+    if (!lineComplete && static_cast<int>(outLines.size()) > 0) {
+      break;
+    }
+
+    size_t lineContentLen = lineEnd - pos;
+    bool hasCR = (lineContentLen > 0 && buffer[pos + lineContentLen - 1] == '\r');
+    size_t displayLen = hasCR ? lineContentLen - 1 : lineContentLen;
+
+    std::string line(reinterpret_cast<char*>(buffer + pos), displayLen);
+    size_t lineBytePos = 0;
+    bool isMarkdown = FsHelpers::hasMarkdownExtension(txt->getPath());
+    char marker = '\7'; // Default: normal text
+    EpdFontFamily::Style style = EpdFontFamily::REGULAR;
+    int indent = 0;
+    std::string cleanLine = line;
+
+    if (isMarkdown) {
+      if (line.rfind("# ", 0) == 0) {
+        marker = '\1'; // H1
+        style = EpdFontFamily::BOLD;
+        cleanLine = line.substr(2);
+      } else if (line.rfind("## ", 0) == 0) {
+        marker = '\2'; // H2
+        style = EpdFontFamily::BOLD;
+        cleanLine = line.substr(3);
+      } else if (line.rfind("### ", 0) == 0) {
+        marker = '\3'; // H3
+        style = EpdFontFamily::BOLD;
+        cleanLine = line.substr(4);
+      } else if (line.rfind("> ", 0) == 0) {
+        marker = '\4'; // Blockquote
+        style = EpdFontFamily::ITALIC;
+        indent = 15;
+        cleanLine = line.substr(2);
+      } else if (line.rfind("- ", 0) == 0) {
+        marker = '\5'; // Bullet point
+        indent = 15;
+        cleanLine = "•  " + line.substr(2);
+      } else if (line.rfind("* ", 0) == 0) {
+        marker = '\5'; // Bullet point
+        indent = 15;
+        cleanLine = "•  " + line.substr(2);
+      } else if (line == "---" || line == "***" || line == "___") {
+        marker = '\6'; // Horizontal rule
+        cleanLine = "";
       }
+    }
 
-      // Check if we have a complete line
-      bool lineComplete = (lineEnd < chunkSize) || (offset + lineEnd >= fileSize);
-
-      if (!lineComplete && static_cast<int>(outLines.size()) > 0) {
-        // Incomplete line and we already have some lines, stop here
+    bool firstSegment = true;
+    do {
+      if (cleanLine.empty() && marker != '\6') {
+        std::string wrapped = "";
+        wrapped += marker;
+        outLines.push_back(wrapped);
         break;
       }
 
-      // Calculate the actual length of line content in the buffer (excluding newline)
-      size_t lineContentLen = lineEnd - pos;
-
-      // Check for carriage return
-      bool hasCR = (lineContentLen > 0 && buffer[pos + lineContentLen - 1] == '\r');
-      size_t displayLen = hasCR ? lineContentLen - 1 : lineContentLen;
-
-      // Extract line content for display (without CR/LF)
-      std::string line(reinterpret_cast<char*>(buffer + pos), displayLen);
-
-      // Track position within this source line (in bytes from pos)
-      size_t lineBytePos = 0;
-
-      bool isMarkdown = FsHelpers::hasMarkdownExtension(txt->getPath());
-      char marker = '\7'; // Default: normal text
-      EpdFontFamily::Style style = EpdFontFamily::REGULAR;
-      int indent = 0;
-      std::string cleanLine = line;
-
-      if (isMarkdown) {
-        if (line.rfind("# ", 0) == 0) {
-          marker = '\1'; // H1
-          style = EpdFontFamily::BOLD;
-          cleanLine = line.substr(2);
-        } else if (line.rfind("## ", 0) == 0) {
-          marker = '\2'; // H2
-          style = EpdFontFamily::BOLD;
-          cleanLine = line.substr(3);
-        } else if (line.rfind("### ", 0) == 0) {
-          marker = '\3'; // H3
-          style = EpdFontFamily::BOLD;
-          cleanLine = line.substr(4);
-        } else if (line.rfind("> ", 0) == 0) {
-          marker = '\4'; // Blockquote
-          style = EpdFontFamily::ITALIC;
-          indent = 15;
-          cleanLine = line.substr(2);
-        } else if (line.rfind("- ", 0) == 0) {
-          marker = '\5'; // Bullet point
-          indent = 15;
-          cleanLine = "•  " + line.substr(2);
-        } else if (line.rfind("* ", 0) == 0) {
-          marker = '\5'; // Bullet point
-          indent = 15;
-          cleanLine = "•  " + line.substr(2);
-        } else if (line == "---" || line == "***" || line == "___") {
-          marker = '\6'; // Horizontal rule
-          cleanLine = "";
-        }
+      if (marker == '\6') {
+        std::string wrapped = "";
+        wrapped += marker;
+        outLines.push_back(wrapped);
+        break;
       }
 
-      bool firstSegment = true;
-      do {
-        if (cleanLine.empty() && marker != '\6') {
-          std::string wrapped = "";
-          wrapped += marker;
-          outLines.push_back(wrapped);
-          break;
-        }
+      int currentIndent = firstSegment ? indent : (marker == '\5' ? 15 : indent);
+      int maxW = viewportWidth - currentIndent;
 
-        if (marker == '\6') {
-          std::string wrapped = "";
-          wrapped += marker;
-          outLines.push_back(wrapped);
-          break;
-        }
+      int lineWidth = renderer.getTextAdvanceX(cachedFontId, cleanLine.c_str(), style);
 
-        int currentIndent = firstSegment ? indent : (marker == '\5' ? 15 : indent);
-        int maxW = viewportWidth - currentIndent;
-
-        int lineWidth = renderer.getTextAdvanceX(cachedFontId, cleanLine.c_str(), style);
-
-        if (lineWidth <= maxW) {
-          std::string wrapped = "";
-          wrapped += (firstSegment ? marker : (marker == '\5' ? '\4' : marker));
-          wrapped += cleanLine;
-          outLines.push_back(wrapped);
-          lineBytePos = displayLen;  // Consumed entire display content
-          cleanLine.clear();
-          break;
-        }
-
-        // Find break point using binary search
-        size_t low = 0;
-        size_t high = cleanLine.length();
-        size_t breakPos = 0;
-
-        while (low <= high) {
-          size_t mid = low + (high - low) / 2;
-          // Make sure mid is at a UTF-8 character boundary
-          while (mid > low && (cleanLine[mid] & 0xC0) == 0x80) {
-            mid--;
-          }
-
-          std::string testStr = cleanLine.substr(0, mid);
-          int testWidth = renderer.getTextAdvanceX(cachedFontId, testStr.c_str(), style);
-
-          if (testWidth <= maxW) {
-            breakPos = mid;
-            low = mid + 1;
-            // Advance low to next UTF-8 boundary
-            while (low <= high && low < cleanLine.length() && (cleanLine[low] & 0xC0) == 0x80) {
-              low++;
-            }
-          } else {
-            if (mid == 0) {
-              breakPos = 0;
-              break;
-            }
-            high = mid - 1;
-          }
-        }
-
-        if (breakPos == 0) {
-          // Fallback: at least one character
-          breakPos = 1;
-          while (breakPos < cleanLine.length() && (cleanLine[breakPos] & 0xC0) == 0x80) {
-            breakPos++;
-          }
-        }
-
-        // Try to break at space if we are not at the end of the line
-        if (breakPos < cleanLine.length()) {
-          size_t spacePos = cleanLine.rfind(' ', breakPos);
-          if (spacePos != std::string::npos && spacePos > 0) {
-            if (spacePos > breakPos - 20 || spacePos > cleanLine.length() / 2) {
-              breakPos = spacePos;
-            }
-          }
-        }
-
+      if (lineWidth <= maxW) {
         std::string wrapped = "";
         wrapped += (firstSegment ? marker : (marker == '\5' ? '\4' : marker));
-        wrapped += cleanLine.substr(0, breakPos);
+        wrapped += cleanLine;
         outLines.push_back(wrapped);
-
-        // Skip space at break point
-        size_t skipChars = breakPos;
-        if (breakPos < cleanLine.length() && cleanLine[breakPos] == ' ') {
-          skipChars++;
-        }
-
-        size_t sourceConsumed = skipChars;
-        if (firstSegment) {
-          if (marker == '\1') {
-            sourceConsumed = skipChars + 2;
-          } else if (marker == '\2') {
-            sourceConsumed = skipChars + 3;
-          } else if (marker == '\3') {
-            sourceConsumed = skipChars + 4;
-          } else if (marker == '\4') {
-            sourceConsumed = skipChars + 2;
-          } else if (marker == '\5') {
-            if (skipChars <= 5) {
-              sourceConsumed = 2;
-            } else {
-              sourceConsumed = 2 + (skipChars - 5);
-            }
-          }
-        }
-        lineBytePos += sourceConsumed;
-
-        cleanLine = cleanLine.substr(skipChars);
-        firstSegment = false;
-      } while (!cleanLine.empty() && static_cast<int>(outLines.size()) < linesPerPage);
-
-      // Determine how much of the source buffer we consumed
-      if (cleanLine.empty()) {
-        // Fully consumed this source line, move past the newline
-        pos = lineEnd + 1;
-      } else {
-        // Partially consumed - page is full mid-line
-        // Move pos to where we stopped in the line (NOT past the line)
-        pos = pos + lineBytePos;
+        lineBytePos = displayLen;
+        cleanLine.clear();
         break;
       }
+
+      size_t low = 0;
+      size_t high = cleanLine.length();
+      size_t breakPos = 0;
+
+      while (low <= high) {
+        size_t mid = low + (high - low) / 2;
+        while (mid > low && (cleanLine[mid] & 0xC0) == 0x80) {
+          mid--;
+        }
+
+        std::string testStr = cleanLine.substr(0, mid);
+        int testWidth = renderer.getTextAdvanceX(cachedFontId, testStr.c_str(), style);
+
+        if (testWidth <= maxW) {
+          breakPos = mid;
+          low = mid + 1;
+          while (low <= high && low < cleanLine.length() && (cleanLine[low] & 0xC0) == 0x80) {
+            low++;
+          }
+        } else {
+          if (mid == 0) {
+            breakPos = 0;
+            break;
+          }
+          high = mid - 1;
+        }
+      }
+
+      if (breakPos == 0) {
+        breakPos = 1;
+        while (breakPos < cleanLine.length() && (cleanLine[breakPos] & 0xC0) == 0x80) {
+          breakPos++;
+        }
+      }
+
+      if (breakPos < cleanLine.length()) {
+        size_t spacePos = cleanLine.rfind(' ', breakPos);
+        if (spacePos != std::string::npos && spacePos > 0) {
+          if (spacePos > breakPos - 20 || spacePos > cleanLine.length() / 2) {
+            breakPos = spacePos;
+          }
+        }
+      }
+
+      std::string wrapped = "";
+      wrapped += (firstSegment ? marker : (marker == '\5' ? '\4' : marker));
+      wrapped += cleanLine.substr(0, breakPos);
+      outLines.push_back(wrapped);
+
+      size_t skipChars = breakPos;
+      if (breakPos < cleanLine.length() && cleanLine[breakPos] == ' ') {
+        skipChars++;
+      }
+
+      size_t sourceConsumed = skipChars;
+      if (firstSegment) {
+        if (marker == '\1') {
+          sourceConsumed = skipChars + 2;
+        } else if (marker == '\2') {
+          sourceConsumed = skipChars + 3;
+        } else if (marker == '\3') {
+          sourceConsumed = skipChars + 4;
+        } else if (marker == '\4') {
+          sourceConsumed = skipChars + 2;
+        } else if (marker == '\5') {
+          if (skipChars <= 5) {
+            sourceConsumed = 2;
+          } else {
+            sourceConsumed = 2 + (skipChars - 5);
+          }
+        }
+      }
+      lineBytePos += sourceConsumed;
+
+      cleanLine = cleanLine.substr(skipChars);
+      firstSegment = false;
+    } while (!cleanLine.empty() && static_cast<int>(outLines.size()) < linesPerPage);
+
+    if (cleanLine.empty()) {
+      pos = lineEnd + 1;
+    } else {
+      pos = pos + lineBytePos;
+      break;
     }
   }
 
-  // Ensure we make progress even if calculations go wrong
   if (pos == 0 && !outLines.empty()) {
-    // Fallback: at minimum, consume something to avoid infinite loop
     pos = 1;
   }
 
   nextOffset = offset + pos;
-
-  // Make sure we don't go past the file
   if (nextOffset > fileSize) {
     nextOffset = fileSize;
   }
 
   free(buffer);
-
   return !outLines.empty();
 }
 
