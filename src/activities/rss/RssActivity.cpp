@@ -17,6 +17,7 @@
 #include "fontIds.h"
 #include <algorithm>
 #include <cctype>
+#include <XmlParserUtils.h>
 
 namespace {
 
@@ -31,56 +32,7 @@ size_t findCaseInsensitive(const std::string& str, const std::string& search, si
   return std::distance(str.begin(), it);
 }
 
-std::string extractTagContent(const std::string& xml, const std::string& tagName, size_t startPos, size_t endPos, size_t& foundPos) {
-  std::string startTag = "<" + tagName;
-  size_t tagStart = findCaseInsensitive(xml, startTag, startPos);
-  if (tagStart == std::string::npos || tagStart >= endPos) {
-    foundPos = std::string::npos;
-    return "";
-  }
-  
-  size_t tagStartClose = xml.find(">", tagStart);
-  if (tagStartClose == std::string::npos || tagStartClose >= endPos) {
-    foundPos = std::string::npos;
-    return "";
-  }
-  
-  if (xml[tagStartClose - 1] == '/') {
-    if (tagName == "link") {
-      size_t hrefPos = findCaseInsensitive(xml, "href=\"", tagStart);
-      if (hrefPos != std::string::npos && hrefPos < tagStartClose) {
-        size_t hrefEnd = xml.find("\"", hrefPos + 6);
-        if (hrefEnd != std::string::npos && hrefEnd < tagStartClose) {
-          foundPos = tagStartClose + 1;
-          return xml.substr(hrefPos + 6, hrefEnd - (hrefPos + 6));
-        }
-      }
-    }
-    foundPos = tagStartClose + 1;
-    return "";
-  }
-  
-  std::string endTag = "</" + tagName + ">";
-  size_t tagEnd = findCaseInsensitive(xml, endTag, tagStartClose + 1);
-  if (tagEnd == std::string::npos || tagEnd >= endPos) {
-    foundPos = std::string::npos;
-    return "";
-  }
-  
-  foundPos = tagEnd + endTag.length();
-  std::string content = xml.substr(tagStartClose + 1, tagEnd - (tagStartClose + 1));
-  
-  // CDATA wrapper
-  size_t cdataStart = content.find("<![CDATA[");
-  if (cdataStart != std::string::npos) {
-    size_t cdataEnd = content.find("]]>", cdataStart + 9);
-    if (cdataEnd != std::string::npos) {
-      content = content.substr(cdataStart + 9, cdataEnd - (cdataStart + 9));
-    }
-  }
-  
-  return content;
-}
+
 
 std::string unescapeHtml(const std::string& input) {
   std::string output = input;
@@ -122,21 +74,63 @@ std::string stripHtmlTags(const std::string& input) {
 }
 
 std::string cleanField(const std::string& input) {
-  std::string stripped = stripHtmlTags(unescapeHtml(input));
-  std::string output = "";
-  for (char c : stripped) {
-    if (c == '\n' || c == '\r' || c == '\t') {
-      output += ' ';
-    } else {
-      output += c;
-    }
-  }
   std::string clean = "";
+  clean.reserve(input.length());
+  
   bool lastWasSpace = true;
-  for (char c : output) {
-    if (c == ' ') {
+  bool inTag = false;
+  
+  size_t i = 0;
+  while (i < input.length()) {
+    char c = input[i];
+    
+    // Handle HTML entities
+    if (c == '&') {
+      std::string entity = "";
+      size_t j = i;
+      while (j < input.length() && j - i < 8) {
+        char ec = input[j];
+        entity += ec;
+        if (ec == ';') break;
+        j++;
+      }
+      
+      char replacement = 0;
+      size_t entityLen = 0;
+      if (entity == "&amp;") { replacement = '&'; entityLen = 5; }
+      else if (entity == "&lt;") { replacement = '<'; entityLen = 4; }
+      else if (entity == "&gt;") { replacement = '>'; entityLen = 4; }
+      else if (entity == "&quot;") { replacement = '"'; entityLen = 6; }
+      else if (entity == "&#39;") { replacement = '\''; entityLen = 5; }
+      else if (entity == "&apos;") { replacement = '\''; entityLen = 6; }
+      
+      if (replacement != 0) {
+        c = replacement;
+        i += entityLen;
+      } else {
+        i++;
+      }
+    } else {
+      i++;
+    }
+    
+    // Handle tag stripping
+    if (c == '<') {
+      inTag = true;
+      continue;
+    } else if (c == '>') {
+      inTag = false;
+      continue;
+    }
+    
+    if (inTag) {
+      continue;
+    }
+    
+    // Replace whitespace characters and collapse multiple spaces
+    if (c == '\n' || c == '\r' || c == '\t' || c == ' ') {
       if (!lastWasSpace) {
-        clean += c;
+        clean += ' ';
         lastWasSpace = true;
       }
     } else {
@@ -144,6 +138,7 @@ std::string cleanField(const std::string& input) {
       lastWasSpace = false;
     }
   }
+  
   if (!clean.empty() && clean.back() == ' ') {
     clean.pop_back();
   }
@@ -284,128 +279,362 @@ std::string getSanitizedUrlFilename(const std::string& url) {
   return result;
 }
 
-std::string getFriendlyFeedName(const std::string& filename) {
-  if (filename.find("ycombinator") != std::string::npos) return "Hacker News";
-  if (filename.find("HomePage_xml") != std::string::npos && filename.find("nytimes") != std::string::npos) return "NYT Top News";
-  if (filename.find("DiningandWine") != std::string::npos && filename.find("nytimes") != std::string::npos) return "NYT Dining & Wine";
-  if (filename.find("nytimes") != std::string::npos) return "NY Times";
-  if (filename.find("bbc") != std::string::npos) return "BBC News";
-  if (filename.find("news_google_com") != std::string::npos) return "Google News";
-  if (filename.find("finance_yahoo_com") != std::string::npos) return "Yahoo Finance";
-  if (filename.find("news_yahoo_com") != std::string::npos) return "Yahoo News";
-  if (filename.find("RSSWorldNews") != std::string::npos) return "WSJ World News";
-  if (filename.find("xkcd") != std::string::npos) return "XKCD Comics";
+std::string getFriendlyFeedName(const std::string& url) {
+  // Get the text from the URL
+  std::string text = url;
   
-  std::string clean = filename;
-  if (clean.length() > 4 && clean.substr(clean.length() - 4) == ".txt") {
-    clean = clean.substr(0, clean.length() - 4);
+  // Replace all non-alphanumeric characters with spaces
+  for (char& c : text) {
+    if (!std::isalnum(static_cast<unsigned char>(c))) {
+      c = ' ';
+    }
   }
-  for (char &c : clean) {
-    if (c == '_') c = ' ';
+
+  // Tokenize and keep only the first three words, skipping boilerplates case-insensitively
+  std::vector<std::string> words;
+  std::string currentWord = "";
+  for (char c : text) {
+    if (c == ' ') {
+      if (!currentWord.empty()) {
+        std::string loweredWord = currentWord;
+        for (char& wc : loweredWord) wc = std::tolower(wc);
+        if (loweredWord != "http" && loweredWord != "https" && loweredWord != "www" && 
+            loweredWord != "com" && loweredWord != "rss" && loweredWord != "xml") {
+          words.push_back(currentWord);
+        }
+        currentWord.clear();
+      }
+    } else {
+      currentWord += c;
+    }
   }
-  return clean;
+  if (!currentWord.empty()) {
+    std::string loweredWord = currentWord;
+    for (char& wc : loweredWord) wc = std::tolower(wc);
+    if (loweredWord != "http" && loweredWord != "https" && loweredWord != "www" && 
+        loweredWord != "com" && loweredWord != "rss" && loweredWord != "xml") {
+      words.push_back(currentWord);
+    }
+  }
+
+  std::string friendlyName = "";
+  for (size_t i = 0; i < words.size() && i < 3; i++) {
+    if (i > 0) friendlyName += " ";
+    friendlyName += words[i];
+  }
+
+  if (friendlyName.empty()) {
+    friendlyName = "Feed";
+  }
+
+  return friendlyName;
 }
 
-bool parseXmlFile(const std::string& xmlPath, std::vector<RssItem>& itemsList, const std::string& defaultFeedName) {
+bool loadSingleItemDetails(const std::string& filepath, const std::string& targetLink, std::string& outDesc, std::string& outContent) {
+  HalFile file;
+  if (!Storage.openFileForRead("RSS", filepath, file)) {
+    return false;
+  }
+
+  std::string line = "";
+  std::string currentLink = "";
+  std::string currentDesc = "";
+  std::string currentContent = "";
+  bool found = false;
+
+  while (file.available() > 0) {
+    char c = file.read();
+    if (c == '\n') {
+      if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+      }
+
+      if (line.rfind("## ", 0) == 0) {
+        if (found) {
+          break;
+        }
+        currentLink.clear();
+        currentDesc.clear();
+        currentContent.clear();
+      } else {
+        if (line.rfind("- Link: ", 0) == 0) {
+          currentLink = line.substr(8);
+          if (currentLink == targetLink) {
+            found = true;
+          }
+        } else if (found) {
+          if (line.rfind("- Description: ", 0) == 0) {
+            std::string rawDesc = line.substr(15);
+            size_t npos = 0;
+            while ((npos = rawDesc.find("\\n", npos)) != std::string::npos) {
+              rawDesc.replace(npos, 2, "\n");
+              npos += 1;
+            }
+            currentDesc = rawDesc;
+          } else if (line.rfind("- Content: ", 0) == 0) {
+            std::string rawContent = line.substr(11);
+            size_t npos = 0;
+            while ((npos = rawContent.find("\\n", npos)) != std::string::npos) {
+              rawContent.replace(npos, 2, "\n");
+              npos += 1;
+            }
+            currentContent = rawContent;
+          }
+        }
+      }
+      line = "";
+    } else {
+      line += c;
+    }
+  }
+
+  if (!line.empty() && found) {
+    if (line.rfind("- Description: ", 0) == 0) {
+      std::string rawDesc = line.substr(15);
+      size_t npos = 0;
+      while ((npos = rawDesc.find("\\n", npos)) != std::string::npos) {
+        rawDesc.replace(npos, 2, "\n");
+        npos += 1;
+      }
+      currentDesc = rawDesc;
+    } else if (line.rfind("- Content: ", 0) == 0) {
+      std::string rawContent = line.substr(11);
+      size_t npos = 0;
+      while ((npos = rawContent.find("\\n", npos)) != std::string::npos) {
+        rawContent.replace(npos, 2, "\n");
+        npos += 1;
+      }
+      currentContent = rawContent;
+    }
+  }
+
+  file.close();
+  if (found) {
+    outDesc = currentDesc;
+    outContent = currentContent;
+    return true;
+  }
+  return false;
+}
+
+class RssParser {
+public:
+  RssParser(HalFile& outFile, const std::string& defaultFeedName)
+      : outFile(outFile), defaultFeedName(defaultFeedName) {
+    parser = XML_ParserCreate(nullptr);
+    if (parser) {
+      XML_SetUserData(parser, this);
+      XML_SetElementHandler(parser, startElement, endElement);
+      XML_SetCharacterDataHandler(parser, characterData);
+    }
+  }
+
+  ~RssParser() { destroyXmlParser(parser); }
+
+  bool parseBuffer(const char* data, int len, bool isFinal) {
+    if (!parser) return false;
+    if (XML_Parse(parser, data, len, isFinal) == XML_STATUS_ERROR) {
+      LOG_DBG("RSS", "Parse error: %s at line %lu",
+              XML_ErrorString(XML_GetErrorCode(parser)),
+              XML_GetCurrentLineNumber(parser));
+      return false;
+    }
+    return true;
+  }
+  
+  int getItemsParsed() const { return itemsParsed; }
+
+private:
+  HalFile& outFile;
+  std::string defaultFeedName;
+  XML_Parser parser = nullptr;
+  
+  bool inItem = false;
+  std::string currentTag = "";
+  std::string currentText = "";
+  RssItem currentItem;
+  int itemsParsed = 0;
+
+  void writeItem(const RssItem& item) {
+    outFile.print("## ");
+    outFile.print(item.title.c_str());
+    outFile.print("\n- Link: ");
+    outFile.print(item.link.c_str());
+    outFile.print("\n- Source: ");
+    outFile.print(item.feedName.c_str());
+    outFile.print("\n- Timestamp: ");
+    outFile.print(item.timestamp.c_str());
+    outFile.print("\n");
+    
+    outFile.print("- Description: ");
+    std::string escapedDesc = item.description;
+    size_t npos = 0;
+    while ((npos = escapedDesc.find("\n", npos)) != std::string::npos) {
+      escapedDesc.replace(npos, 1, "\\n");
+      npos += 2;
+    }
+    outFile.print(escapedDesc.c_str());
+    outFile.print("\n");
+    
+    outFile.print("- Content: ");
+    std::string escapedContent = item.content;
+    npos = 0;
+    while ((npos = escapedContent.find("\n", npos)) != std::string::npos) {
+      escapedContent.replace(npos, 1, "\\n");
+      npos += 2;
+    }
+    outFile.print(escapedContent.c_str());
+    outFile.print("\n\n");
+  }
+  
+  static void XMLCALL startElement(void* userData, const XML_Char* name, const XML_Char** atts) {
+    auto* self = static_cast<RssParser*>(userData);
+    std::string tag(name);
+    std::string lowerTag = tag;
+    for(char& c : lowerTag) c = std::tolower(c);
+    
+    std::string localTag = lowerTag;
+    size_t colonPos = localTag.find(':');
+    if (colonPos != std::string::npos) {
+      localTag = localTag.substr(colonPos + 1);
+    }
+    
+    if (localTag == "item" || localTag == "entry") {
+      self->inItem = true;
+      self->currentItem = RssItem();
+      self->currentItem.feedName = self->defaultFeedName;
+    }
+    
+    if (self->inItem) {
+      self->currentTag = localTag;
+      self->currentText.clear();
+      
+      if (localTag == "link") {
+        std::string href = "";
+        std::string rel = "";
+        for (int i = 0; atts[i]; i += 2) {
+          std::string attName(atts[i]);
+          for(char& c : attName) c = std::tolower(c);
+          
+          std::string localAtt = attName;
+          size_t attColon = localAtt.find(':');
+          if (attColon != std::string::npos) {
+            localAtt = localAtt.substr(attColon + 1);
+          }
+          
+          if (localAtt == "href") {
+            href = atts[i + 1];
+          } else if (localAtt == "rel") {
+            rel = atts[i + 1];
+            for (char& c : rel) c = std::tolower(c);
+          }
+        }
+        
+        if (!href.empty()) {
+          // If our current link is empty, or we explicitly got an alternate link,
+          // prioritize it. Avoid overwriting a valid link with "self" or "enclosure" feed links.
+          if (self->currentItem.link.empty() || rel == "alternate" || (rel != "self" && rel != "enclosure")) {
+            self->currentItem.link = href;
+          }
+        }
+      }
+    }
+  }
+  
+  static void XMLCALL endElement(void* userData, const XML_Char* name) {
+    auto* self = static_cast<RssParser*>(userData);
+    std::string tag(name);
+    std::string lowerTag = tag;
+    for(char& c : lowerTag) c = std::tolower(c);
+    
+    std::string localTag = lowerTag;
+    size_t colonPos = localTag.find(':');
+    if (colonPos != std::string::npos) {
+      localTag = localTag.substr(colonPos + 1);
+    }
+    
+    if (localTag == "item" || localTag == "entry") {
+      self->inItem = false;
+      if (!self->currentItem.title.empty() && self->itemsParsed < 25) {
+        self->currentItem.title = cleanField(self->currentItem.title);
+        self->currentItem.link = cleanField(self->currentItem.link);
+        self->currentItem.description = cleanField(self->currentItem.description);
+        self->currentItem.content = cleanField(self->currentItem.content);
+        
+        self->writeItem(self->currentItem);
+        self->itemsParsed++;
+      }
+      self->currentItem = RssItem(); // Clear the strings in currentItem to reclaim heap immediately
+    } else if (self->inItem) {
+      if (localTag == "title") {
+        if (self->currentItem.title.empty()) self->currentItem.title = self->currentText;
+      } else if (localTag == "link") {
+        if (self->currentItem.link.empty()) self->currentItem.link = self->currentText;
+      } else if (localTag == "description" || localTag == "summary") {
+        if (self->currentItem.description.empty()) self->currentItem.description = self->currentText;
+      } else if (localTag == "content" || localTag == "encoded" || lowerTag == "content:encoded") {
+        if (self->currentItem.content.empty()) self->currentItem.content = self->currentText;
+      } else if (localTag == "pubdate" || localTag == "updated" || localTag == "published" || localTag == "date" || lowerTag == "dc:date") {
+        if (self->currentItem.timestamp.empty()) {
+          uint32_t ts = parseRssDateToUnix(cleanField(self->currentText));
+          self->currentItem.timestamp = std::to_string(ts);
+        }
+      }
+    }
+    
+    self->currentTag.clear();
+    self->currentText.clear();
+  }
+  
+  static void XMLCALL characterData(void* userData, const XML_Char* s, const int len) {
+    auto* self = static_cast<RssParser*>(userData);
+    if (self->inItem && !self->currentTag.empty()) {
+      size_t limit = 8192; // Default limit for content
+      if (self->currentTag == "description" || self->currentTag == "summary") {
+        limit = 2048;
+      } else if (self->currentTag == "title" || self->currentTag == "link") {
+        limit = 512;
+      }
+      if (self->currentText.length() < limit) {
+        size_t toAppend = std::min(static_cast<size_t>(len), limit - self->currentText.length());
+        self->currentText.append(s, toAppend);
+      }
+    }
+  }
+};
+
+bool parseXmlFile(const std::string& xmlPath, const std::string& mdPath, const std::string& defaultFeedName) {
   HalFile inFile;
   if (!Storage.openFileForRead("RSS", xmlPath.c_str(), inFile)) {
     return false;
   }
   
-  std::string buffer = "";
-  bool inItem = false;
-  std::string itemTag = "";
-  int itemsParsed = 0;
+  HalFile outFile;
+  if (!Storage.openFileForWrite("RSS", mdPath.c_str(), outFile)) {
+    inFile.close();
+    return false;
+  }
+  
+  // Write feed header
+  outFile.print("# ");
+  outFile.print(defaultFeedName.c_str());
+  outFile.print(" Feed\n\n");
+  
+  RssParser parser(outFile, defaultFeedName);
+  char buffer[2048];
   
   while (inFile.available() > 0) {
-    char c = inFile.read();
-    
-    if (!inItem) {
-      buffer += c;
-      if (buffer.length() > 20) {
-        buffer = buffer.substr(buffer.length() - 20);
-      }
-      
-      size_t itemPos = findCaseInsensitive(buffer, "<item");
-      size_t entryPos = findCaseInsensitive(buffer, "<entry");
-      
-      if (itemPos != std::string::npos) {
-        inItem = true;
-        itemTag = "item";
-        buffer = buffer.substr(itemPos);
-      } else if (entryPos != std::string::npos) {
-        inItem = true;
-        itemTag = "entry";
-        buffer = buffer.substr(entryPos);
-      }
-    } else {
-      buffer += c;
-      
-      std::string endTag = "</" + itemTag + ">";
-      size_t endPos = findCaseInsensitive(buffer, endTag);
-      if (endPos != std::string::npos) {
-        std::string itemXml = buffer.substr(0, endPos + endTag.length());
-        
-        size_t dummy;
-        std::string rawTitle = extractTagContent(itemXml, "title", 0, itemXml.length(), dummy);
-        std::string rawLink = extractTagContent(itemXml, "link", 0, itemXml.length(), dummy);
-        
-        std::string rawDesc = "";
-        if (itemTag == "entry") {
-          rawDesc = extractTagContent(itemXml, "summary", 0, itemXml.length(), dummy);
-          if (rawDesc.empty()) {
-            rawDesc = extractTagContent(itemXml, "content", 0, itemXml.length(), dummy);
-          }
-        } else {
-          rawDesc = extractTagContent(itemXml, "description", 0, itemXml.length(), dummy);
-        }
-        
-        std::string rawDate = "";
-        if (itemTag == "entry") {
-          rawDate = extractTagContent(itemXml, "updated", 0, itemXml.length(), dummy);
-          if (rawDate.empty()) {
-            rawDate = extractTagContent(itemXml, "published", 0, itemXml.length(), dummy);
-          }
-        } else {
-          rawDate = extractTagContent(itemXml, "pubDate", 0, itemXml.length(), dummy);
-          if (rawDate.empty()) {
-            rawDate = extractTagContent(itemXml, "pubdate", 0, itemXml.length(), dummy);
-          }
-          if (rawDate.empty()) {
-            rawDate = extractTagContent(itemXml, "dc:date", 0, itemXml.length(), dummy);
-          }
-        }
-        
-        std::string title = cleanField(rawTitle);
-        std::string link = cleanField(rawLink);
-        std::string desc = cleanField(rawDesc);
-        uint32_t ts = parseRssDateToUnix(rawDate);
-        std::string timestamp = std::to_string(ts);
-        
-        if (!title.empty() && itemsParsed < 25) {
-          RssItem item;
-          item.title = title;
-          item.link = link;
-          item.description = desc;
-          item.timestamp = timestamp;
-          item.feedName = defaultFeedName;
-          itemsList.push_back(item);
-          itemsParsed++;
-        }
-        
-        inItem = false;
-        buffer = "";
-      }
-      
-      if (buffer.length() > 8192) {
-        inItem = false;
-        buffer = "";
+    int bytesRead = inFile.read(reinterpret_cast<uint8_t*>(buffer), sizeof(buffer));
+    if (bytesRead > 0) {
+      if (!parser.parseBuffer(buffer, bytesRead, inFile.available() == 0)) {
+        break;
       }
     }
   }
   
   inFile.close();
-  return itemsParsed > 0;
+  outFile.close();
+  return parser.getItemsParsed() > 0;
 }
 
 std::string timeAgo(uint32_t timestamp) {
@@ -489,26 +718,8 @@ void RssActivity::saveSubscriptions() {
   }
 }
 
-void RssActivity::saveFeedMarkdown(const std::string &feedName, const std::vector<RssItem> &itemsList) {
-  std::string filepath = "/apps/rss/" + feedName + ".md";
-  String md = "# " + String(feedName.c_str()) + " Feed\n\n";
-  for (const auto &item : itemsList) {
-    md += "## " + String(item.title.c_str()) + "\n";
-    md += "- Link: " + String(item.link.c_str()) + "\n";
-    md += "- Source: " + String(item.feedName.c_str()) + "\n";
-    md += "- Timestamp: " + String(item.timestamp.c_str()) + "\n";
-    std::string escapedDesc = item.description;
-    size_t npos = 0;
-    while ((npos = escapedDesc.find("\n", npos)) != std::string::npos) {
-      escapedDesc.replace(npos, 1, "\\n");
-      npos += 2;
-    }
-    md += "- Description: " + String(escapedDesc.c_str()) + "\n\n";
-  }
-  Storage.writeFile(filepath.c_str(), md);
-}
 
-bool RssActivity::parseFeedsFromMarkdown(const std::string &filepath, std::vector<RssItem> &targetList) {
+bool RssActivity::parseFeedsFromMarkdown(const std::string &filepath, std::vector<RssItem> &targetList, bool summaryOnly) {
   HalFile file;
   if (!Storage.openFileForRead("RSS", filepath, file)) {
     return false;
@@ -546,7 +757,20 @@ bool RssActivity::parseFeedsFromMarkdown(const std::string &filepath, std::vecto
             rawDesc.replace(npos, 2, "\n");
             npos += 1;
           }
+          if (summaryOnly && rawDesc.length() > 150) {
+            rawDesc = rawDesc.substr(0, 150) + "...";
+          }
           currentItem.description = rawDesc;
+        } else if (line.rfind("- Content: ", 0) == 0) {
+          if (!summaryOnly) {
+            std::string rawContent = line.substr(11);
+            size_t npos = 0;
+            while ((npos = rawContent.find("\\n", npos)) != std::string::npos) {
+              rawContent.replace(npos, 2, "\n");
+              npos += 1;
+            }
+            currentItem.content = rawContent;
+          }
         }
       }
       line = "";
@@ -580,7 +804,20 @@ bool RssActivity::parseFeedsFromMarkdown(const std::string &filepath, std::vecto
           rawDesc.replace(npos, 2, "\n");
           npos += 1;
         }
+        if (summaryOnly && rawDesc.length() > 150) {
+          rawDesc = rawDesc.substr(0, 150) + "...";
+        }
         currentItem.description = rawDesc;
+      } else if (line.rfind("- Content: ", 0) == 0) {
+        if (!summaryOnly) {
+          std::string rawContent = line.substr(11);
+          size_t npos = 0;
+          while ((npos = rawContent.find("\\n", npos)) != std::string::npos) {
+            rawContent.replace(npos, 2, "\n");
+            npos += 1;
+          }
+          currentItem.content = rawContent;
+        }
       }
     }
   }
@@ -596,7 +833,7 @@ bool RssActivity::loadOfflineFeeds() {
   allItems.clear();
   std::string filename = getSanitizedUrlFilename(activeFeed);
   std::string filepath = "/apps/rss/" + filename + ".md";
-  bool success = parseFeedsFromMarkdown(filepath, allItems);
+  bool success = parseFeedsFromMarkdown(filepath, allItems, true);
   if (success) {
     // Sort globally by timestamp descending
     std::sort(allItems.begin(), allItems.end(), [](const RssItem& a, const RssItem& b) {
@@ -607,7 +844,7 @@ bool RssActivity::loadOfflineFeeds() {
 }
 
 void RssActivity::runBackgroundFetch() {
-  DownloadWatchdog::start(30000);
+  DownloadWatchdog::start(60000);
   errorMessage.clear();
   
   bool anySuccess = false;
@@ -645,15 +882,11 @@ void RssActivity::runBackgroundFetch() {
           delay(1000);
         }
       }
-      
       if (fetchSuccess) {
-        std::vector<RssItem> feedItems;
-        std::string friendlyName = getFriendlyFeedName(filename);
-        if (parseXmlFile(xmlPath, feedItems, friendlyName)) {
-          std::sort(feedItems.begin(), feedItems.end(), [](const RssItem& a, const RssItem& b) {
-            return atoll(a.timestamp.c_str()) > atoll(b.timestamp.c_str());
-          });
-          saveFeedMarkdown(filename, feedItems);
+        std::string friendlyName = getFriendlyFeedName(url);
+        std::string mdPath = "/apps/rss/" + filename + ".md";
+        ensureDirectoriesExist();
+        if (parseXmlFile(xmlPath, mdPath, friendlyName)) {
           anySuccess = true;
         }
         Storage.remove(xmlPath.c_str());
@@ -727,13 +960,11 @@ void RssActivity::loop() {
     pendingUpdateFeed = false;
     isRefreshing = false;
     fetchTaskHandle = nullptr;
-    if (DownloadWatchdog::gotTimeout) {
-      LOG_ERR("RSS", "Watchdog timeout! Returning home.");
-      activityManager.goHome();
-      return;
-    }
+    bool timedOut = DownloadWatchdog::gotTimeout;
     loadOfflineFeeds();
-    if (allItems.empty()) {
+    if (timedOut) {
+      errorMessage = "Request timed out.";
+    } else if (allItems.empty()) {
       errorMessage = "Offline. No cached feed items found.";
     } else {
       errorMessage.clear();
@@ -770,6 +1001,10 @@ void RssActivity::loop() {
       requestUpdate();
     } else if (state == RssState::FeedSelection) {
       finish();
+    } else if (state == RssState::PostDetail) {
+      loadOfflineFeeds(); // Free RAM by reloading summary-only feed list
+      state = RssState::FeedList;
+      requestUpdate();
     }
     return;
   }
@@ -930,11 +1165,20 @@ void RssActivity::loop() {
           }
           requestUpdate();
         }
+      } else if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+        // Load details dynamically from the markdown file on disk to save RAM
+        const auto& item = allItems[selectedItemIndex];
+        std::string filename = getSanitizedUrlFilename(activeFeed);
+        std::string filepath = "/apps/rss/" + filename + ".md";
+        loadSingleItemDetails(filepath, item.link, allItems[selectedItemIndex].description, allItems[selectedItemIndex].content);
+        
+        state = RssState::PostDetail;
+        detailScrollOffset = 0;
+        requestUpdate();
       } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
         const auto& item = allItems[selectedItemIndex];
         GUI.drawPopup(renderer, "Connecting to WiFi...");
         if (WifiConnectHelper::ensureWifiConnected()) {
-          wifiWasUsed = true;
           wifiWasUsed = true;
           std::string sanitized = sanitizeFilename(item.title);
           if (sanitized.length() > 30) {
@@ -1003,6 +1247,86 @@ void RssActivity::loop() {
         }
       }
     }
+  } else if (state == RssState::PostDetail) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
+      if (detailScrollOffset > 0) {
+        detailScrollOffset--;
+        requestUpdate();
+      }
+    } else if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
+      detailScrollOffset++;
+      requestUpdate();
+    } else if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+        const auto& item = allItems[selectedItemIndex];
+        GUI.drawPopup(renderer, "Connecting to WiFi...");
+        if (WifiConnectHelper::ensureWifiConnected()) {
+          wifiWasUsed = true;
+          std::string sanitized = sanitizeFilename(item.title);
+          if (sanitized.length() > 30) {
+            sanitized = sanitized.substr(0, 30);
+          }
+          Storage.ensureDirectoryExists("/websites");
+          std::string tempPath = "/websites/temp_download.tmp";
+          
+          bool success = false;
+          int retries = 3;
+          
+          while (retries > 0) {
+            GUI.drawPopup(renderer, "Downloading...");
+            
+            auto result = HttpDownloader::downloadToFile(item.link.c_str(), tempPath.c_str(), nullptr, nullptr, "", "");
+            if (result == HttpDownloader::OK) {
+              success = true;
+              break;
+            }
+            retries--;
+            if (retries > 0) {
+              delay(1000);
+            }
+          }
+          
+          if (success) {
+            std::string ext = ".html";
+            std::string urlToCheck = item.link;
+            
+            size_t queryPos = urlToCheck.find('?');
+            if (queryPos != std::string::npos) {
+              urlToCheck = urlToCheck.substr(0, queryPos);
+            }
+            
+            bool isTxt = false;
+            if (urlToCheck.length() >= 4) {
+              std::string urlExt = urlToCheck.substr(urlToCheck.length() - 4);
+              for (char &c : urlExt) c = tolower(c);
+              if (urlExt == ".txt") {
+                isTxt = true;
+              }
+            }
+            
+            if (isTxt) {
+              ext = ".txt";
+            }
+            
+            std::string destPath = "/websites/" + sanitized + ext;
+            {
+              RenderLock lock;
+              if (Storage.exists(destPath.c_str())) {
+                Storage.remove(destPath.c_str());
+              }
+              Storage.rename(tempPath.c_str(), destPath.c_str());
+            }
+            activityManager.pushReader(destPath);
+          } else {
+            GUI.drawPopup(renderer, "Download failed!");
+            delay(2000);
+            requestUpdate();
+          }
+          WiFi.disconnect(true);
+          WiFi.mode(WIFI_OFF);
+        } else {
+          requestUpdate();
+        }
+      }
   }
 }
 
@@ -1015,7 +1339,7 @@ void RssActivity::render(RenderLock&&) {
   
   std::string headerTitle = "RSS Feed";
   if (state == RssState::FeedList || state == RssState::Loading) {
-    headerTitle = getFriendlyFeedName(getSanitizedUrlFilename(activeFeed));
+    headerTitle = getFriendlyFeedName(activeFeed);
   }
   
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, headerTitle.c_str());
@@ -1079,7 +1403,62 @@ void RssActivity::render(RenderLock&&) {
       }
     }
     
-    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), nullptr, "Refresh");
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), "Details", "Refresh");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  } else if (state == RssState::PostDetail) {
+    const auto& item = allItems[selectedItemIndex];
+    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "RSS Post");
+    
+    int contentY = contentTop;
+    
+    auto titleLines = renderer.wrappedText(SMALL_FONT_ID, item.title.c_str(), pageWidth - 2 * metrics.contentSidePadding, 3, EpdFontFamily::BOLD);
+    for (size_t l = 0; l < titleLines.size(); l++) {
+      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, contentY + l * renderer.getLineHeight(SMALL_FONT_ID), titleLines[l].c_str(), true, EpdFontFamily::BOLD);
+    }
+    int titleHeight = titleLines.size() * renderer.getLineHeight(SMALL_FONT_ID);
+    contentY += titleHeight + 10;
+    
+    std::string fullText = item.description;
+    if (!item.content.empty()) {
+      if (!fullText.empty()) fullText += "\n\n";
+      fullText += item.content;
+    }
+    
+    if (!item.link.empty()) {
+      std::string printableUrl = item.link;
+      std::string formattedUrl = "";
+      for (size_t i = 0; i < printableUrl.length(); ++i) {
+        formattedUrl += printableUrl[i];
+        if (printableUrl[i] == '?' || printableUrl[i] == '&' || printableUrl[i] == '-' || printableUrl[i] == '_') {
+          formattedUrl += " ";
+        } else if (printableUrl[i] == '/') {
+          if (i + 1 < printableUrl.length() && printableUrl[i + 1] != '/') {
+            formattedUrl += " ";
+          }
+        } else if (printableUrl[i] == '.') {
+          if (i > 0 && !std::isdigit(printableUrl[i - 1])) {
+            formattedUrl += " ";
+          }
+        }
+      }
+      if (!fullText.empty()) fullText += "\n\n";
+      fullText += "Link: " + formattedUrl;
+    }
+    
+    auto lines = renderer.wrappedText(SMALL_FONT_ID, fullText.c_str(), pageWidth - 2 * metrics.contentSidePadding, 500, EpdFontFamily::REGULAR);
+    
+    int maxLines = (contentHeight - (contentY - contentTop)) / renderer.getLineHeight(SMALL_FONT_ID);
+    if (detailScrollOffset > std::max(0, static_cast<int>(lines.size()) - maxLines)) {
+      detailScrollOffset = std::max(0, static_cast<int>(lines.size()) - maxLines);
+    }
+    
+    for (int i = 0; i < maxLines; i++) {
+      int lineIdx = detailScrollOffset + i;
+      if (lineIdx >= static_cast<int>(lines.size())) break;
+      renderer.drawText(SMALL_FONT_ID, metrics.contentSidePadding, contentY + i * renderer.getLineHeight(SMALL_FONT_ID), lines[lineIdx].c_str(), true, EpdFontFamily::REGULAR);
+    }
+    
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "Visit Link", nullptr, nullptr);
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   } else if (state == RssState::FeedSelection) {
     GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "RSS Feed");
@@ -1098,7 +1477,7 @@ void RssActivity::render(RenderLock&&) {
       [this, totalItems](int index) {
         if (index == totalItems - 1) return std::string("[+ Add RSS URL]");
         std::string url = subscriptions[index];
-        return getFriendlyFeedName(getSanitizedUrlFilename(url));
+        return getFriendlyFeedName(url);
       },
       [this, totalItems](int index) {
         if (index == totalItems - 1) return UIIcon::File;

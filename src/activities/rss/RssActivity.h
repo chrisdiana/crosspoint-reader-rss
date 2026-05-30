@@ -9,6 +9,7 @@ struct RssItem {
   std::string title;
   std::string link;
   std::string description;
+  std::string content;   // Full article content (if available)
   std::string timestamp; // Unix timestamp as string
   std::string feedName;  // display name of the feed
 };
@@ -16,7 +17,8 @@ struct RssItem {
 enum class RssState {
   FeedSelection,
   Loading,
-  FeedList
+  FeedList,
+  PostDetail
 };
 
 class RssActivity final : public Activity {
@@ -29,6 +31,7 @@ class RssActivity final : public Activity {
    int selectedItemIndex = 0;
    int selectedSubIndex = 0;
    int itemsScrollOffset = 0;
+   int detailScrollOffset = 0;
 
    bool offlineMode = false;
    std::string errorMessage;
@@ -44,8 +47,7 @@ class RssActivity final : public Activity {
    bool loadOfflineFeeds();
    void ensureDirectoriesExist();
 
-   void saveFeedMarkdown(const std::string &feedName, const std::vector<RssItem> &itemsList);
-   bool parseFeedsFromMarkdown(const std::string &filepath, std::vector<RssItem> &targetList);
+   bool parseFeedsFromMarkdown(const std::string &filepath, std::vector<RssItem> &targetList, bool summaryOnly = false);
 
  public:
   void runBackgroundFetch();
