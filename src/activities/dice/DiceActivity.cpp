@@ -232,9 +232,13 @@ void DiceActivity::render(RenderLock&&) {
   for (int i = 0; i < 4; i++) {
     bool active = (currentMode == static_cast<DiceMode>(i));
     int tx = 20 + i * tabW;
-    renderer.drawRoundedRect(tx + 2, tabsY, tabW - 4, 30, 1, 5, active);
+    renderer.drawRoundedRect(tx + 2, tabsY, tabW - 4, 30, 1, 5, true);
+    if (active) {
+      renderer.fillRoundedRect(tx + 2, tabsY, tabW - 4, 30, 5, Color::Black);
+    }
     renderer.drawText(SMALL_FONT_ID, tx + (tabW - renderer.getTextWidth(SMALL_FONT_ID, tabNames[i].c_str())) / 2, tabsY + 7, tabNames[i].c_str(), !active);
   }
+
 
   // Draw main card
   const int cardW = pageWidth - 40;

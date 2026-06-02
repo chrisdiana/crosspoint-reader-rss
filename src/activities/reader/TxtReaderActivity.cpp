@@ -68,7 +68,7 @@ void TxtReaderActivity::loop() {
     return;
   }
 
-  // Short press BACK goes directly to home (or pops to caller if it's a Wikipedia/RSS/Reddit downloaded link)
+  // Short press BACK goes directly to home (or pops to caller if it's a Wikipedia/RSS downloaded link)
   if (mappedInput.wasReleased(MappedInputManager::Button::Back) &&
       mappedInput.getHeldTime() < ReaderUtils::GO_HOME_MS) {
     if (txt && (txt->getPath().rfind("/apps/wikipedia/", 0) == 0 ||

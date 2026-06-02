@@ -350,12 +350,19 @@ void ChessActivity::render(RenderLock&&) {
   const int toolbarY = metrics.topPadding + metrics.headerHeight + 20;
 
   bool newGameSel = (cursorRow == -1 && cursorCol == 0);
-  renderer.drawRoundedRect(20, toolbarY, 120, 30, 1, 5, newGameSel);
+  renderer.drawRoundedRect(20, toolbarY, 120, 30, 1, 5, true);
+  if (newGameSel) {
+    renderer.fillRoundedRect(20, toolbarY, 120, 30, 5, Color::Black);
+  }
   renderer.drawText(SMALL_FONT_ID, 30, toolbarY + 7, "New Game", !newGameSel);
 
   bool flipSel = (cursorRow == -1 && cursorCol == 1);
-  renderer.drawRoundedRect(160, toolbarY, 120, 30, 1, 5, flipSel);
+  renderer.drawRoundedRect(160, toolbarY, 120, 30, 1, 5, true);
+  if (flipSel) {
+    renderer.fillRoundedRect(160, toolbarY, 120, 30, 5, Color::Black);
+  }
   renderer.drawText(SMALL_FONT_ID, 170, toolbarY + 7, "Flip Board", !flipSel);
+
 
   // Chess Board dimensions
   const int cellS = 48; // 48x48 squares to fit 48pt emoji font

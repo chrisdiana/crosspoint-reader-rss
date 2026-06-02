@@ -102,7 +102,7 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
       return HttpDownloader::HTTP_ERROR;
     }
 
-    esp_http_client_set_header(client, "User-Agent", "CrossPointReader/1.3 (ESP32)");
+    esp_http_client_set_header(client, "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36");
     if (!username.empty() && !password.empty()) {
       const std::string credentials = username + ":" + password;
       const String header = "Basic " + base64::encode(credentials.c_str());

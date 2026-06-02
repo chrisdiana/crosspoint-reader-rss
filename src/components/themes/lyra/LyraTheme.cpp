@@ -32,8 +32,8 @@
 #include "components/icons/weather24.h"
 #include "components/icons/sudoku.h"
 #include "components/icons/sudoku24.h"
-#include "components/icons/reddit.h"
-#include "components/icons/reddit24.h"
+#include "components/icons/duckduckgo.h"
+#include "components/icons/duckduckgo24.h"
 #include "components/icons/clock.h"
 #include "components/icons/clock24.h"
 #include "components/icons/wikipedia.h"
@@ -42,7 +42,10 @@
 #include "components/icons/chess24.h"
 #include "components/icons/dice.h"
 #include "components/icons/dice24.h"
+#include "components/icons/rss.h"
+#include "components/icons/rss24.h"
 #include "fontIds.h"
+
 
 // Internal constants
 namespace {
@@ -74,8 +77,6 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return Weather24Icon;
       case UIIcon::Sudoku:
         return Sudoku24Icon;
-      case UIIcon::Reddit:
-        return Reddit24Icon;
       case UIIcon::Clock:
         return Clock24Icon;
       case UIIcon::Wikipedia:
@@ -84,6 +85,10 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return Chess24Icon;
       case UIIcon::Dice:
         return Dice24Icon;
+      case UIIcon::DuckDuckGo:
+        return DuckDuckGo24Icon;
+      case UIIcon::Rss:
+        return Rss24Icon;
       default:
         return nullptr;
     }
@@ -111,8 +116,6 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return WeatherIcon;
       case UIIcon::Sudoku:
         return SudokuIcon;
-      case UIIcon::Reddit:
-        return RedditIcon;
       case UIIcon::Clock:
         return ClockIcon;
       case UIIcon::Wikipedia:
@@ -121,12 +124,17 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return ChessIcon;
       case UIIcon::Dice:
         return DiceIcon;
+      case UIIcon::DuckDuckGo:
+        return DuckDuckGoIcon;
+      case UIIcon::Rss:
+        return RssIcon;
       default:
         return nullptr;
     }
   }
   return nullptr;
 }
+
 }  // namespace
 
 void LyraTheme::fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage) const {
@@ -558,7 +566,7 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
   int menuRowHeight = LyraMetrics::values.menuRowHeight;
   int menuSpacing = LyraMetrics::values.menuSpacing;
   int activeFont = UI_12_FONT_ID;
-  if (maxPageItems > 6) {
+  if (maxPageItems > 12) {
     menuRowHeight = 36;
     menuSpacing = 4;
     activeFont = UI_10_FONT_ID;

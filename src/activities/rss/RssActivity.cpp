@@ -926,7 +926,7 @@ void RssActivity::downloadActivePost() {
   allItems.clear();
   allItems.shrink_to_fit();
   
-  GUI.drawPopup(renderer, "Connecting to WiFi...");
+  GUI.drawPopup(renderer, "Downloading...");
   if (WifiConnectHelper::ensureWifiConnected()) {
     wifiWasUsed = true;
     std::string sanitized = sanitizeFilename(downloadTitle);
@@ -1455,7 +1455,8 @@ void RssActivity::render(RenderLock&&) {
       [this, totalItems](int index) {
         if (index == totalItems - 1) return UIIcon::File;
         return UIIcon::Library;
-      }
+      },
+      9
     );
     
     const char* rightAction = nullptr;

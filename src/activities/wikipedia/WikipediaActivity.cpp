@@ -704,6 +704,7 @@ void WikipediaActivity::loop() {
                 if (keyboardResult && !keyboardResult->text.empty()) {
                   searchQuery = keyboardResult->text;
                   state = WikiState::Loading;
+                  isSearchTask = true;
                   requestUpdate();
                   ensureWifiConnected([this]() {
                     wifiWasUsed = true;
@@ -735,6 +736,7 @@ void WikipediaActivity::loop() {
       if (mappedInput.wasReleased(MappedInputManager::Button::Right) ||
           mappedInput.wasReleased(MappedInputManager::Button::Down)) {
         state = WikiState::Loading;
+        isSearchTask = true;
         errorMessage.clear();
         requestUpdate();
         ensureWifiConnected([this]() {
@@ -758,6 +760,7 @@ void WikipediaActivity::loop() {
                 if (keyboardResult && !keyboardResult->text.empty()) {
                   searchQuery = keyboardResult->text;
                   state = WikiState::Loading;
+                  isSearchTask = true;
                   requestUpdate();
                   ensureWifiConnected([this]() {
                     wifiWasUsed = true;
@@ -792,15 +795,18 @@ void WikipediaActivity::loop() {
         } else {
           articleToFetch = title;
           state = WikiState::Loading;
-          requestUpdate();
-          ensureWifiConnected([this]() {
+          isSearchTask = false;
+          GUI.drawPopup(renderer, "Downloading...");
+          if (WifiConnectHelper::ensureWifiConnected()) {
             wifiWasUsed = true;
             pendingArticle = true;
             requestUpdate();
-          }, [this]() {
+          } else {
+            GUI.drawPopup(renderer, "Download failed!");
+            delay(2000);
             state = WikiState::SearchResults;
             requestUpdate();
-          });
+          }
         }
       }
     }
@@ -858,7 +864,11 @@ void WikipediaActivity::render(RenderLock &&) {
 
   if (state == WikiState::Loading) {
     int textY = contentTop + contentHeight / 2 - 20;
-    renderer.drawCenteredText(UI_12_FONT_ID, textY, "Loading Wikipedia...");
+    if (isSearchTask) {
+      renderer.drawCenteredText(UI_12_FONT_ID, textY, "Loading Wikipedia...");
+    } else {
+      renderer.drawCenteredText(UI_12_FONT_ID, textY, "Downloading...");
+    }
     const auto labels =
         mappedInput.mapLabels(tr(STR_BACK), nullptr, nullptr, nullptr);
     GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3,
@@ -876,7 +886,8 @@ void WikipediaActivity::render(RenderLock &&) {
           if (index == 0)
             return UIIcon::File;
           return UIIcon::Book;
-        });
+        },
+        9);
 
     const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT),
                                               tr(STR_DIR_UP), tr(STR_DIR_DOWN));
@@ -913,7 +924,8 @@ void WikipediaActivity::render(RenderLock &&) {
               return UIIcon::Book; // Cached offline
             }
             return UIIcon::Book; // Remote online
-          });
+          },
+          9);
 
       const auto labels = mappedInput.mapLabels(
           tr(STR_BACK), tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
