@@ -30,17 +30,19 @@ In addition to all the fantastic EPUB rendering, custom fonts, and library manag
     <td><img src="./docs/images/apps/weather.png" alt="Weather" width="100%"></td>
     <td><img src="./docs/images/apps/rss.png" alt="RSS" width="100%"></td>
     <td><img src="./docs/images/apps/reddit.png" alt="Reddit" width="100%"></td>
-    <td><img src="./docs/images/apps/duckduckgo.png" alt="DDG" width="100%"></td>
-    <td><img src="./docs/images/apps/markdown.png" alt="Markdown" width="100%"></td>
   </tr>
   <tr>
+    <td><img src="./docs/images/apps/markdown.png" alt="Markdown" width="100%"></td>
     <td><img src="./docs/images/apps/html.png" alt="HTML" width="100%"></td>
     <td><img src="./docs/images/apps/calculator.png" alt="Calculator" width="100%"></td>
+  </tr>
+  <tr>
     <td><img src="./docs/images/apps/chess.png" alt="Chess" width="100%"></td>
     <td><img src="./docs/images/apps/dice.png" alt="Dice" width="100%"></td>
     <td><img src="./docs/images/apps/sudoku.png" alt="Sudoku" width="100%"></td>
   </tr>
 </table>
+
 
 
 
