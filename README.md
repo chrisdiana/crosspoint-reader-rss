@@ -23,18 +23,19 @@ In addition to all the fantastic EPUB rendering, custom fonts, and library manag
 - **RSS Feed & Reddit**: Subscribe to your favorite blogs and news sites. Articles are downloaded and cached for distraction-free, offline reading using the native text reader engine.
 - **DuckDuckGo**: Search the web using DuckDuckGo. Results are displayed in a text-heavy format optimized for e-ink displays.
 
+
 ## Gallery
-![Weather](./docs/images/apps/weather.jpg)
-![Wikipedia](./docs/images/apps/wikipedia.jpg)
-![RSS](./docs/images/apps/rss.jpg)
-![Reddit](./docs/images/apps/reddit.jpg)
-![DDG](./docs/images/apps/duckduckgo.jpg)
-![Markdown](./docs/images/apps/markdown.jpg)
-![HTML](./docs/images/apps/html.jpg)
-![Calculator](./docs/images/apps/calculator.jpg)
-![Chess](./docs/images/apps/chess.jpg)
-![Dice](./docs/images/apps/dice.jpg)
-![Sudoku](./docs/images/apps/sudoku.jpg)
+![Weather](./docs/images/apps/weather.png)
+![Wikipedia](./docs/images/apps/wikipedia.png)
+![RSS](./docs/images/apps/rss.png)
+![Reddit](./docs/images/apps/reddit.png)
+![DDG](./docs/images/apps/duckduckgo.png)
+![Markdown](./docs/images/apps/markdown.png)
+![HTML](./docs/images/apps/html.png)
+![Calculator](./docs/images/apps/calculator.png)
+![Chess](./docs/images/apps/chess.png)
+![Dice](./docs/images/apps/dice.png)
+![Sudoku](./docs/images/apps/sudoku.png)
 
 
 
