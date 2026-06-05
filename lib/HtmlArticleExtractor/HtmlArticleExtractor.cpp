@@ -7,7 +7,7 @@
 #include <string_view>
 
 namespace {
-constexpr size_t MAX_EXTRACTED_TEXT_BYTES = 8 * 1024;
+constexpr size_t MAX_EXTRACTED_TEXT_BYTES = 4 * 1024;
 constexpr size_t MAX_DECODE_BUFFER_BYTES = 12 * 1024;
 
 char lowerAsciiChar(char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); }
@@ -323,69 +323,47 @@ void appendBreak(std::string& out) {
   out.push_back('\n');
 }
 
-std::string htmlToText(std::string_view html) {
-  std::string out;
-  out.reserve(std::min<size_t>(html.size(), 2048));
-  bool lastSpace = false;
-
-  for (size_t i = 0; i < html.size(); i++) {
-    if (out.size() >= MAX_EXTRACTED_TEXT_BYTES) break;
-    const char c = html[i];
-    if (c == '<') {
-      const size_t tagEnd = findChar(html, '>', i + 1);
-      if (tagEnd == std::string::npos) break;
-      const std::string tagLower = toLowerAscii(std::string(html.substr(i + 1, std::min<size_t>(tagEnd - i - 1, 32))));
-      const char* skipTags[] = {"script", "style", "noscript", "svg", "nav", "footer"};
-      bool skipped = false;
-      for (const char* skipTag : skipTags) {
-        if (tagMatches(tagLower, skipTag)) {
-          const std::string close = std::string("</") + skipTag;
-          const size_t closeStart = findCaseInsensitive(html, close.c_str(), tagEnd + 1);
-          if (closeStart != std::string::npos) {
-          const size_t closeEnd = findChar(html, '>', closeStart);
-            i = closeEnd == std::string::npos ? html.size() : closeEnd;
-          } else {
-            i = tagEnd;
-          }
-          appendSpace(out);
-          lastSpace = true;
-          skipped = true;
-          break;
-        }
-      }
-      if (skipped) continue;
-
-      if (tagMatches(tagLower, "p") || startsWithAt(tagLower, 0, "/p") || tagMatches(tagLower, "br") ||
-          tagMatches(tagLower, "li") || startsWithAt(tagLower, 0, "/div") || tagMatches(tagLower, "h1") ||
-          tagMatches(tagLower, "h2") || tagMatches(tagLower, "h3")) {
-        appendBreak(out);
-        lastSpace = false;
-      } else {
-        appendSpace(out);
-        lastSpace = true;
-      }
-      i = tagEnd;
-      continue;
-    }
-
-    if (std::isspace(static_cast<unsigned char>(c))) {
-      if (!lastSpace) {
-        out.push_back(' ');
-        lastSpace = true;
-      }
-    } else {
-      out.push_back(c);
-      lastSpace = false;
-    }
-  }
-
-  std::string decoded = decodeEntities(out);
-  std::string normalized;
-  normalized.reserve(std::min<size_t>(decoded.size(), 1024));
+void normalizeTextInto(std::string& normalized, std::string_view text) {
   int consecutiveNewlines = 0;
   bool spacePending = false;
-  for (char c : decoded) {
-    if (normalized.size() >= MAX_EXTRACTED_TEXT_BYTES) break;
+  for (size_t i = 0; i < text.size() && normalized.size() < MAX_EXTRACTED_TEXT_BYTES; i++) {
+    const char c = text[i];
+    if (c == '<') {
+      const size_t tagEnd = findChar(text, '>', i + 1);
+      if (tagEnd != std::string::npos && tagEnd - i <= 160) {
+        const std::string tagLower =
+            toLowerAscii(std::string(text.substr(i + 1, std::min<size_t>(tagEnd - i - 1, 32))));
+        // Skip entire content of style/script/svg blocks — they appear here when HTML was
+        // entity-encoded inside an article element and then decoded by decodeEntities().
+        const char* skipContentTags[] = {"style", "script", "svg"};
+        bool skipped = false;
+        for (const char* skipTag : skipContentTags) {
+          if (tagMatches(tagLower, skipTag)) {
+            const std::string closeTag = std::string("</") + skipTag;
+            const size_t closeStart = findCaseInsensitive(text, closeTag.c_str(), tagEnd + 1);
+            const size_t closeEnd = closeStart != std::string::npos ? findChar(text, '>', closeStart) : std::string::npos;
+            i = closeEnd != std::string::npos ? closeEnd : text.size() - 1;
+            skipped = true;
+            break;
+          }
+        }
+        if (skipped) continue;
+        if (tagMatches(tagLower, "p") || startsWithAt(tagLower, 0, "/p") || tagMatches(tagLower, "br") ||
+            tagMatches(tagLower, "li") || startsWithAt(tagLower, 0, "/div") || tagMatches(tagLower, "h1") ||
+            tagMatches(tagLower, "h2") || tagMatches(tagLower, "h3")) {
+          while (!normalized.empty() && normalized.back() == ' ') normalized.pop_back();
+          consecutiveNewlines++;
+          if (!normalized.empty() && consecutiveNewlines <= 2) normalized.push_back('\n');
+          if (!normalized.empty() && consecutiveNewlines <= 2) normalized.push_back('\n');
+          spacePending = false;
+        } else if (!normalized.empty() && normalized.back() != '\n') {
+          spacePending = true;
+        }
+        i = tagEnd;
+        continue;
+      }
+    }
+
     if (c == '\n') {
       while (!normalized.empty() && normalized.back() == ' ') normalized.pop_back();
       consecutiveNewlines++;
@@ -400,6 +378,79 @@ std::string htmlToText(std::string_view html) {
       spacePending = false;
     }
   }
+}
+
+std::string htmlToText(std::string_view html) {
+  // Scope `out` so it is freed before `normalized` is built.
+  // Peak allocation: out(≤MAX) + decoded(≤MAX) during decodeEntities,
+  // then decoded(≤MAX) + normalized(≤MAX) during normalizeTextInto = 2×MAX max.
+  std::string decoded;
+  {
+    std::string out;
+    out.reserve(std::min<size_t>(html.size(), 2048));
+    bool lastSpace = false;
+
+    for (size_t i = 0; i < html.size(); i++) {
+      if (out.size() >= MAX_EXTRACTED_TEXT_BYTES) break;
+      const char c = html[i];
+      if (c == '<') {
+        const size_t tagEnd = findChar(html, '>', i + 1);
+        if (tagEnd == std::string::npos) break;
+        const std::string tagLower = toLowerAscii(std::string(html.substr(i + 1, std::min<size_t>(tagEnd - i - 1, 32))));
+        const char* skipTags[] = {"script", "style", "noscript", "svg", "nav", "footer", "aside",
+                                 "template", "iframe"};
+        bool skipped = false;
+        for (const char* skipTag : skipTags) {
+          if (tagMatches(tagLower, skipTag)) {
+            const std::string close = std::string("</") + skipTag;
+            const size_t closeStart = findCaseInsensitive(html, close.c_str(), tagEnd + 1);
+            if (closeStart != std::string::npos) {
+              const size_t closeEnd = findChar(html, '>', closeStart);
+              i = closeEnd == std::string::npos ? html.size() - 1 : closeEnd;
+            } else {
+              // Close tag not found — HTML is truncated mid-block. Skip to end of buffer
+              // to prevent CSS/script text content from leaking into the output.
+              i = html.empty() ? 0 : html.size() - 1;
+            }
+            appendSpace(out);
+            lastSpace = true;
+            skipped = true;
+            break;
+          }
+        }
+        if (skipped) continue;
+
+        if (tagMatches(tagLower, "p") || startsWithAt(tagLower, 0, "/p") || tagMatches(tagLower, "br") ||
+            tagMatches(tagLower, "li") || startsWithAt(tagLower, 0, "/div") || tagMatches(tagLower, "h1") ||
+            tagMatches(tagLower, "h2") || tagMatches(tagLower, "h3")) {
+          appendBreak(out);
+          lastSpace = false;
+        } else {
+          appendSpace(out);
+          lastSpace = true;
+        }
+        i = tagEnd;
+        continue;
+      }
+
+      if (std::isspace(static_cast<unsigned char>(c))) {
+        if (!lastSpace) {
+          out.push_back(' ');
+          lastSpace = true;
+        }
+      } else {
+        out.push_back(c);
+        lastSpace = false;
+      }
+    }
+
+    decoded = decodeEntities(out);
+    // out goes out of scope here — its heap block is freed before normalized is allocated
+  }
+
+  std::string normalized;
+  normalized.reserve(std::min<size_t>(decoded.size(), 1024));
+  normalizeTextInto(normalized, decoded);
   trimInPlace(normalized);
   return normalized;
 }
@@ -435,13 +486,188 @@ std::string paragraphText(std::string_view html) {
   trimInPlace(out);
   return out;
 }
+// Find the closing tag that correctly matches the opening tag whose '>' is at openTagEnd.
+// Counts open/close pairs so nested elements of the same type don't confuse the search.
+// Returns std::string::npos if no matching close is found (truncated HTML).
+size_t findMatchingClose(std::string_view html, size_t openTagEnd, const char* tag) {
+  const std::string openStr = std::string("<") + tag;
+  const std::string closeStr = std::string("</") + tag + ">";
+  const size_t openLen = openStr.size();
+  const size_t closeLen = closeStr.size();
+  int depth = 1;
+  size_t pos = openTagEnd + 1;
+  while (depth > 0) {
+    const size_t nextOpen = findCaseInsensitive(html, openStr.c_str(), pos);
+    const size_t nextClose = findCaseInsensitive(html, closeStr.c_str(), pos);
+    if (nextClose == std::string::npos) return std::string::npos;
+    if (nextOpen != std::string::npos && nextOpen < nextClose) {
+      const size_t nameEnd = nextOpen + openLen;
+      if (tagNameBoundary(html, nameEnd)) depth++;
+      const size_t tagEnd = findChar(html, '>', nextOpen);
+      pos = tagEnd != std::string::npos ? tagEnd + 1 : nextOpen + 1;
+    } else {
+      if (--depth == 0) return nextClose;
+      pos = nextClose + closeLen;
+    }
+  }
+  return std::string::npos;
+}
+
+// --- Readability-inspired content scoring ---
+// Metrics computed from the raw HTML of a block element's inner content.
+struct TextMetrics {
+  size_t textLen = 0;
+  size_t commas = 0;
+  size_t linkTextLen = 0;
+  size_t paragraphs = 0;
+};
+
+// Single-pass scan of raw HTML. No heap allocation — all stack locals.
+TextMetrics analyzeContent(std::string_view html) {
+  TextMetrics m;
+  int linkDepth = 0;
+  size_t i = 0;
+  while (i < html.size()) {
+    if (html[i] != '<') {
+      const char c = html[i];
+      if (!std::isspace(static_cast<unsigned char>(c))) {
+        m.textLen++;
+        if (c == ',') m.commas++;
+        if (linkDepth > 0) m.linkTextLen++;
+      }
+      i++;
+      continue;
+    }
+    const size_t tagEnd = findChar(html, '>', i + 1);
+    if (tagEnd == std::string::npos) break;
+    const size_t nameStart = i + 1;
+    const bool closing = nameStart < html.size() && html[nameStart] == '/';
+    const size_t ns = closing ? nameStart + 1 : nameStart;
+
+    // Skip non-text element content entirely (incl. nav/footer/aside so their
+    // links don't inflate link density and disqualify real article blocks)
+    const char* skipContentTags[] = {"script", "style", "noscript", "svg",
+                                     "nav", "footer", "aside"};
+    bool skipped = false;
+    for (const char* skipTag : skipContentTags) {
+      if (!closing && startsWithAtCaseInsensitive(html, ns, skipTag) &&
+          tagNameBoundary(html, ns + strlen(skipTag))) {
+        char closeTag[12] = "</";
+        strncat(closeTag, skipTag, sizeof(closeTag) - 3);
+        const size_t closePos = findCaseInsensitive(html, closeTag, tagEnd + 1);
+        if (closePos != std::string::npos) {
+          const size_t closeEnd = findChar(html, '>', closePos);
+          i = closeEnd != std::string::npos ? closeEnd + 1 : html.size();
+        } else {
+          i = html.size();
+        }
+        skipped = true;
+        break;
+      }
+    }
+    if (skipped) continue;
+
+    // Track <a> depth to measure link density
+    if (startsWithAtCaseInsensitive(html, ns, "a") && tagNameBoundary(html, ns + 1)) {
+      if (closing) { if (linkDepth > 0) linkDepth--; } else linkDepth++;
+    }
+    // <p> tags signal prose structure
+    if (!closing && startsWithAtCaseInsensitive(html, ns, "p") && tagNameBoundary(html, ns + 1)) {
+      m.paragraphs++;
+    }
+    i = tagEnd + 1;
+  }
+  return m;
+}
+
+// Readability-inspired scoring: text density + comma richness + paragraph count,
+// penalised by link density, boosted/nulled by class/id name patterns.
+// Uses findCaseInsensitive on string_view — no heap allocation.
+int readabilityScore(std::string_view content, std::string_view tagHtml) {
+  const TextMetrics m = analyzeContent(content);
+  if (m.textLen < 25) return 0;
+
+  const float linkDensity =
+      static_cast<float>(m.linkTextLen) / static_cast<float>(m.textLen);
+  if (linkDensity > 0.5f) return 0;  // navigation or link-list block
+
+  int score = static_cast<int>(m.textLen / 10)
+            + static_cast<int>(std::min(m.commas, size_t{10}) * 3)
+            + static_cast<int>(m.paragraphs * 2);
+  score = static_cast<int>(static_cast<float>(score) * (1.0f - linkDensity));
+
+  // Negative patterns: hard-reject these blocks (from Mozilla Readability pattern list)
+  const char* negativeHints[] = {
+    "comment", "sidebar", "banner", "advertisement", "widget",
+    "related", "social", "footer", "promo", "popup", "newsletter",
+    "subscribe", "masthead", "sponsor", "combx", "shoutbox"
+  };
+  for (const char* hint : negativeHints) {
+    if (findCaseInsensitive(tagHtml, hint) != std::string::npos) return 0;
+  }
+
+  // Positive patterns: these blocks likely contain article body text
+  const char* positiveHints[] = {
+    "article", "content", "post", "story", "entry", "body", "main", "text", "hentry"
+  };
+  for (const char* hint : positiveHints) {
+    if (findCaseInsensitive(tagHtml, hint) != std::string::npos) { score += 25; break; }
+  }
+
+  return std::max(0, score);
+}
+
+// Score every candidate block element and return the inner content of the winner.
+// Uses nesting-aware close-tag matching so a div containing nested divs (e.g. image
+// blocks) is scored on its full content, not just text before the first inner </div>.
+// All nested elements are visited (pos advances past the opening tag, not the close)
+// so inner high-scoring blocks can beat a lower-scoring outer wrapper.
+// Truncated elements (HTML cut off before the matching close) are still scored on
+// whatever content is available — important when the article starts near the download limit.
+std::string_view selectReadableContent(std::string_view html) {
+  const char* blockTags[] = {"article", "main", "section", "div"};
+  std::string_view best;
+  int bestScore = 0;
+
+  for (const char* tag : blockTags) {
+    const std::string open = std::string("<") + tag;
+    size_t pos = 0;
+    while ((pos = findCaseInsensitive(html, open.c_str(), pos)) != std::string::npos) {
+      const size_t nameEnd = pos + open.size();
+      if (!tagNameBoundary(html, nameEnd)) { pos = nameEnd; continue; }
+      const size_t startEnd = findChar(html, '>', pos);
+      if (startEnd == std::string::npos) break;
+
+      // Nesting-aware: find the true matching close tag.
+      // Fall back to end of buffer when HTML is truncated mid-element.
+      const size_t end = findMatchingClose(html, startEnd, tag);
+      const size_t contentEnd = end != std::string::npos ? end : html.size();
+
+      const std::string_view content = html.substr(startEnd + 1, contentEnd - startEnd - 1);
+      const std::string_view tagHtml = html.substr(pos, startEnd - pos + 1);
+      const int score = readabilityScore(content, tagHtml);
+      if (score > bestScore) {
+        bestScore = score;
+        best = content;
+      }
+      pos = startEnd + 1;  // advance past opening tag, not close — visit nested elements
+    }
+  }
+  return best;
+}
+// --- end Readability scoring ---
+
 }  // namespace
 
 std::string HtmlArticleExtractor::extractReadableText(const std::string& html) {
   if (html.empty()) return {};
 
-  const std::string jsonArticleBody = extractJsonStringValue(html, "articlebody");
-  if (jsonArticleBody.size() >= 120) return htmlToText(jsonArticleBody);
+  // Try common JSON keys used by news/blog platforms for embedded article content.
+  // extractJsonStringValue is case-insensitive on the key name.
+  for (const char* key : {"articlebody", "articletext", "bodytext", "bodyhtml", "contenthtml"}) {
+    const std::string val = extractJsonStringValue(html, key);
+    if (val.size() >= 120) return htmlToText(val);
+  }
 
   const std::string encodedHtmlPayload = extractEntityEncodedJsonStringValue(html, "html");
   if (encodedHtmlPayload.size() >= 120) {
@@ -450,10 +676,9 @@ std::string HtmlArticleExtractor::extractReadableText(const std::string& html) {
   }
 
   std::string_view htmlView(html);
-  std::string_view content = largestElementContent(htmlView, "article");
-  if (content.empty()) content = largestElementContent(htmlView, "main");
-  if (content.empty()) content = largestElementContent(htmlView, "section", true);
-  if (content.empty()) content = largestElementContent(htmlView, "div", true);
+
+  // Readability-style: score all block elements and pick the best by text quality
+  std::string_view content = selectReadableContent(htmlView);
   if (content.empty()) content = largestElementContent(htmlView, "body");
   if (content.empty()) content = htmlView;
 

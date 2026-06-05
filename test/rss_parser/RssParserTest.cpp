@@ -67,6 +67,23 @@ TEST(RssParser, PrefersContentEncodedAndDecodesEntities) {
   EXPECT_EQ(parser->getItems()[0].content, "Long body & details here.");
 }
 
+TEST(RssParser, StripsEntityEncodedHtmlTags) {
+  auto parser = parse(R"xml(
+    <rss version="2.0">
+      <channel>
+        <item>
+          <title>Encoded HTML</title>
+          <description>&lt;p&gt;Summary with &lt;strong&gt;encoded&lt;/strong&gt; tags.&lt;/p&gt;</description>
+        </item>
+      </channel>
+    </rss>
+  )xml");
+
+  ASSERT_TRUE(*parser);
+  ASSERT_EQ(parser->getItems().size(), 1u);
+  EXPECT_EQ(parser->getItems()[0].content, "Summary with encoded tags.");
+}
+
 TEST(RssParser, ParsesNamespacedCreator) {
   auto parser = parse(R"xml(
     <rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">

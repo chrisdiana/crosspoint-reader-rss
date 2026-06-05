@@ -108,13 +108,22 @@ const char* RssParser::findAttribute(const XML_Char** atts, const char* name) {
 }
 
 std::string RssParser::normalizeText(const std::string& text) {
+  std::string decoded = text;
+  replaceAll(decoded, "&amp;", "&");
+  replaceAll(decoded, "&lt;", "<");
+  replaceAll(decoded, "&gt;", ">");
+  replaceAll(decoded, "&quot;", "\"");
+  replaceAll(decoded, "&#39;", "'");
+  replaceAll(decoded, "&apos;", "'");
+  replaceAll(decoded, "&nbsp;", " ");
+
   std::string out;
-  out.reserve(text.size());
+  out.reserve(decoded.size());
   bool inTag = false;
   bool lastSpace = false;
 
-  for (size_t i = 0; i < text.size(); i++) {
-    const char c = text[i];
+  for (size_t i = 0; i < decoded.size(); i++) {
+    const char c = decoded[i];
     if (c == '<') {
       inTag = true;
       if (!lastSpace) {
@@ -140,13 +149,6 @@ std::string RssParser::normalizeText(const std::string& text) {
     }
   }
 
-  replaceAll(out, "&amp;", "&");
-  replaceAll(out, "&lt;", "<");
-  replaceAll(out, "&gt;", ">");
-  replaceAll(out, "&quot;", "\"");
-  replaceAll(out, "&#39;", "'");
-  replaceAll(out, "&apos;", "'");
-  replaceAll(out, "&nbsp;", " ");
   return trim(out);
 }
 

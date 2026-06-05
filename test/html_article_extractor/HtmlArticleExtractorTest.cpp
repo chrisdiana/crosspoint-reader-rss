@@ -109,6 +109,23 @@ TEST(HtmlArticleExtractor, UsesTruncatedEntityEncodedHtmlPayload) {
   EXPECT_NE(text.find("short feed description"), std::string::npos);
 }
 
+TEST(HtmlArticleExtractor, RemovesTagsThatAppearAfterEntityDecode) {
+  const std::string html = R"html(
+    <html><body>
+      <article>
+        &lt;p&gt;Entity encoded paragraphs should be converted into clean reader text, not visible HTML tags.&lt;/p&gt;
+        &lt;p&gt;The second paragraph gives enough content to pass the useful text threshold.&lt;/p&gt;
+      </article>
+    </body></html>
+  )html";
+
+  const std::string text = HtmlArticleExtractor::extractReadableText(html);
+  EXPECT_NE(text.find("Entity encoded paragraphs"), std::string::npos);
+  EXPECT_NE(text.find("second paragraph"), std::string::npos);
+  EXPECT_EQ(text.find("<p>"), std::string::npos);
+  EXPECT_EQ(text.find("</p>"), std::string::npos);
+}
+
 TEST(HtmlArticleExtractor, UsesContentHintDiv) {
   const std::string html = R"html(
     <html><body>
@@ -146,4 +163,43 @@ TEST(HtmlArticleExtractor, FallsBackToBodyParagraphs) {
 
 TEST(HtmlArticleExtractor, RejectsTinyFragments) {
   EXPECT_TRUE(HtmlArticleExtractor::extractReadableText("<html><body><p>Too short.</p></body></html>").empty());
+}
+
+TEST(HtmlArticleExtractor, CapturesContentAfterNestedDiv) {
+  // Articles often contain nested divs (image blocks, pull quotes) before the
+  // remaining paragraphs. The extractor must not stop at the first </div>.
+  const std::string html = R"html(
+    <html><body>
+      <div class="entry-content">
+        <p>Opening paragraph sets up the story with enough length to be useful.</p>
+        <div class="wp-block-image"><img src="photo.jpg" alt="photo"></div>
+        <p>Middle paragraph continues after the image block and adds more context.</p>
+        <p>Final paragraph closes the article and confirms full content extraction.</p>
+      </div>
+    </body></html>
+  )html";
+
+  const std::string text = HtmlArticleExtractor::extractReadableText(html);
+  EXPECT_NE(text.find("Opening paragraph"), std::string::npos);
+  EXPECT_NE(text.find("Middle paragraph"), std::string::npos);
+  EXPECT_NE(text.find("Final paragraph"), std::string::npos);
+}
+
+TEST(HtmlArticleExtractor, IgnoresNavLinksWhenScoring) {
+  // Navigation inside an article wrapper should not inflate link density enough
+  // to disqualify the block from being selected as article content.
+  const std::string html = R"html(
+    <html><body>
+      <article>
+        <nav><a href="/1">One</a> <a href="/2">Two</a> <a href="/3">Three</a></nav>
+        <p>Real article text starts here and has enough length to demonstrate that
+        nav link density does not disqualify this article element from selection.</p>
+        <p>Second paragraph confirms the article body is returned, not an empty result.</p>
+      </article>
+    </body></html>
+  )html";
+
+  const std::string text = HtmlArticleExtractor::extractReadableText(html);
+  EXPECT_NE(text.find("Real article text"), std::string::npos);
+  EXPECT_NE(text.find("Second paragraph"), std::string::npos);
 }
