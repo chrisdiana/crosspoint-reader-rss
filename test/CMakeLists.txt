@@ -39,6 +39,7 @@ enable_testing()
 include(GoogleTest)
 
 add_subdirectory(streaming_json_parser)
+add_subdirectory(html_article_extractor)
 add_subdirectory(release_json_parser)
 add_subdirectory(rss_parser)
 add_subdirectory(differential_rounding)

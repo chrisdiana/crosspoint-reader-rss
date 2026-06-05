@@ -11,7 +11,7 @@
 
 class RssFeedBrowserActivity final : public Activity {
  public:
-  enum class BrowserState { CHECK_WIFI, WIFI_SELECTION, LOADING, BROWSING, ERROR };
+  enum class BrowserState { CHECK_WIFI, WIFI_SELECTION, LOADING, BROWSING, ARTICLE_LOADING, ERROR };
 
   RssFeedBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, RssFeed feed)
       : Activity("RssFeedBrowser", renderer, mappedInput), feed(std::move(feed)) {}
@@ -37,5 +37,6 @@ class RssFeedBrowserActivity final : public Activity {
   void onWifiSelectionComplete(bool connected);
   void fetchFeed();
   void openItem(const RssItem& item);
+  std::string fetchArticleText(const RssItem& item);
   bool preventAutoSleep() override { return true; }
 };

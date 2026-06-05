@@ -66,6 +66,10 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
   }
 
   esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
+  // Keep response bodies readable by the firmware parsers/extractors. Some
+  // servers gzip generic clients by default; this firmware does not currently
+  // stream-decompress HTTP bodies.
+  esp_http_client_set_header(client, "Accept-Encoding", "identity");
   if (!username.empty() && !password.empty()) {
     // Preemptive Basic auth, like the prior addHeader; don't wait for a 401.
     const std::string credentials = username + ":" + password;
