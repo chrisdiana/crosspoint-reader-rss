@@ -15,7 +15,17 @@
 #include "components/icons/book.h"
 #include "components/icons/book24.h"
 #include "components/icons/bookmark.h"
+#include "components/icons/calculator.h"
+#include "components/icons/calculator24.h"
+#include "components/icons/chess.h"
+#include "components/icons/chess24.h"
+#include "components/icons/clock.h"
+#include "components/icons/clock24.h"
 #include "components/icons/cover.h"
+#include "components/icons/dice.h"
+#include "components/icons/dice24.h"
+#include "components/icons/duckduckgo.h"
+#include "components/icons/duckduckgo24.h"
 #include "components/icons/file24.h"
 #include "components/icons/folder.h"
 #include "components/icons/folder24.h"
@@ -23,30 +33,19 @@
 #include "components/icons/image24.h"
 #include "components/icons/library.h"
 #include "components/icons/recent.h"
-#include "components/icons/settings2.h"
-#include "components/icons/text24.h"
-#include "components/icons/transfer.h"
-#include "components/icons/wifi.h"
-#include "components/icons/calculator.h"
-#include "components/icons/calculator24.h"
-#include "components/icons/weather.h"
-#include "components/icons/weather24.h"
-#include "components/icons/sudoku.h"
-#include "components/icons/sudoku24.h"
-#include "components/icons/duckduckgo.h"
-#include "components/icons/duckduckgo24.h"
-#include "components/icons/clock.h"
-#include "components/icons/clock24.h"
-#include "components/icons/wikipedia.h"
-#include "components/icons/wikipedia24.h"
-#include "components/icons/chess.h"
-#include "components/icons/chess24.h"
-#include "components/icons/dice.h"
-#include "components/icons/dice24.h"
 #include "components/icons/rss.h"
 #include "components/icons/rss24.h"
+#include "components/icons/settings2.h"
+#include "components/icons/sudoku.h"
+#include "components/icons/sudoku24.h"
+#include "components/icons/text24.h"
+#include "components/icons/transfer.h"
+#include "components/icons/weather.h"
+#include "components/icons/weather24.h"
+#include "components/icons/wifi.h"
+#include "components/icons/wikipedia.h"
+#include "components/icons/wikipedia24.h"
 #include "fontIds.h"
-
 
 // Internal constants
 namespace {
@@ -569,8 +568,7 @@ void LyraTheme::drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) c
 
 void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
-                               const std::function<UIIcon(int index)>& rowIcon,
-                               int maxPageItems) const {
+                               const std::function<UIIcon(int index)>& rowIcon, int maxPageItems) const {
   int menuRowHeight = LyraMetrics::values.menuRowHeight;
   int menuSpacing = LyraMetrics::values.menuSpacing;
   int activeFont = UI_12_FONT_ID;
@@ -603,13 +601,15 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
                       scrollBarHeight, true);
   }
 
-  int contentWidth = rect.width - (buttonCount > pageItems ? (LyraMetrics::values.scrollBarWidth + LyraMetrics::values.scrollBarRightOffset + 4) : 0);
+  int contentWidth =
+      rect.width - (buttonCount > pageItems
+                        ? (LyraMetrics::values.scrollBarWidth + LyraMetrics::values.scrollBarRightOffset + 4)
+                        : 0);
 
   for (int i = pageStartIndex; i < buttonCount && i < pageStartIndex + pageItems; ++i) {
     int tileWidth = contentWidth - LyraMetrics::values.contentSidePadding * 2;
-    Rect tileRect = Rect{rect.x + LyraMetrics::values.contentSidePadding,
-                         rect.y + (i - pageStartIndex) * rowHeight, tileWidth,
-                         menuRowHeight};
+    Rect tileRect = Rect{rect.x + LyraMetrics::values.contentSidePadding, rect.y + (i - pageStartIndex) * rowHeight,
+                         tileWidth, menuRowHeight};
 
     const bool selected = selectedIndex == i;
 
@@ -643,7 +643,8 @@ void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
         iconYOffset = (menuRowHeight - 24) / 2;
       }
       if (iconBitmap != nullptr) {
-        renderer.drawIcon(iconBitmap, textX + iconXOffset, tileRect.y + (menuRowHeight - drawIconSize) / 2, drawIconSize, drawIconSize);
+        renderer.drawIcon(iconBitmap, textX + iconXOffset, tileRect.y + (menuRowHeight - drawIconSize) / 2,
+                          drawIconSize, drawIconSize);
         textX += drawIconSize + hPaddingInSelection + 2;
       }
     }

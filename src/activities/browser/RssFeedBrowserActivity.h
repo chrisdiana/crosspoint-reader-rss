@@ -32,10 +32,15 @@ class RssFeedBrowserActivity final : public Activity {
   int selectorIndex = 0;
   bool consumeBack = false;
 
+  bool isCachedView = false;
+
   void checkAndConnectWifi();
   void launchWifiSelection();
   void onWifiSelectionComplete(bool connected);
   void fetchFeed();
+  bool tryLoadFromCache();
+  void saveToCache() const;
+  std::string cacheFilePath() const;
   void openItem(const RssItem& item);
   std::string fetchArticleText(const RssItem& item);
   bool preventAutoSleep() override { return true; }

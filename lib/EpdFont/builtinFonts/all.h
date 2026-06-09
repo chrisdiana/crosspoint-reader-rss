@@ -39,5 +39,21 @@
 #include <builtinFonts/ubuntu_12_regular.h>
 #include <builtinFonts/notosans_48_emoji.h>
 #include <builtinFonts/notosans_16_emoji.h>
+#include <builtinFonts/opendyslexic_8_regular.h>
+#include <builtinFonts/opendyslexic_8_bold.h>
+#include <builtinFonts/opendyslexic_8_italic.h>
+#include <builtinFonts/opendyslexic_8_bolditalic.h>
+#include <builtinFonts/opendyslexic_10_regular.h>
+#include <builtinFonts/opendyslexic_10_bold.h>
+#include <builtinFonts/opendyslexic_10_italic.h>
+#include <builtinFonts/opendyslexic_10_bolditalic.h>
+#include <builtinFonts/opendyslexic_12_regular.h>
+#include <builtinFonts/opendyslexic_12_bold.h>
+#include <builtinFonts/opendyslexic_12_italic.h>
+#include <builtinFonts/opendyslexic_12_bolditalic.h>
+#include <builtinFonts/opendyslexic_14_regular.h>
+#include <builtinFonts/opendyslexic_14_bold.h>
+#include <builtinFonts/opendyslexic_14_italic.h>
+#include <builtinFonts/opendyslexic_14_bolditalic.h>
 
 

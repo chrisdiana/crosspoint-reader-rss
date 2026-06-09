@@ -329,8 +329,6 @@ void setupDisplayAndFonts(bool seamless = false) {
   renderer.insertFont(NOTOSANS_48_EMOJI_FONT_ID, notosans48EmojiFontFamily);
   renderer.insertFont(NOTOSANS_16_EMOJI_FONT_ID, notosans16EmojiFontFamily);
 
-
-
   // Discover and load SD card fonts
   sdFontSystem.begin(renderer);
 

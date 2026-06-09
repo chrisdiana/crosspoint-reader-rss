@@ -187,6 +187,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
                             "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM),
 
+        // --- RSS ---
+        SettingInfo::Toggle(StrId::STR_RSS_DYNAMIC_FETCH, &CrossPointSettings::rssDynamicFetch, "rssDynamicFetch",
+                            StrId::STR_CAT_RSS),
+
         // --- KOReader Sync (web-only, uses KOReaderCredentialStore) ---
         SettingInfo::DynamicString(
             StrId::STR_KOREADER_USERNAME, [] { return KOREADER_STORE.getUsername(); },

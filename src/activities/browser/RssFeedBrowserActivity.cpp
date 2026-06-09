@@ -1,6 +1,7 @@
 #include "RssFeedBrowserActivity.h"
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -11,7 +12,9 @@
 
 #include <cctype>
 #include <cstring>
+#include <functional>
 
+#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -31,6 +34,7 @@ constexpr size_t ARTICLE_MARKER_CONTEXT_BYTES = 1024;
 constexpr size_t ARTICLE_EXTRACT_HEAP_RESERVE_BYTES = 12 * 1024;
 constexpr char ARTICLE_TMP_DIR[] = "/.crosspoint";
 constexpr char ARTICLE_TMP_FILE[] = "/.crosspoint/rss_article.tmp";
+constexpr char RSS_CACHE_DIR[] = "/.crosspoint/rss";
 
 struct ArticleFetchResult {
   std::string text;
@@ -259,6 +263,63 @@ std::string wikipediaRenderUrl(const std::string& url) {
 }
 }  // namespace
 
+std::string RssFeedBrowserActivity::cacheFilePath() const {
+  const size_t hash = std::hash<std::string>{}(feed.url);
+  char path[80];
+  snprintf(path, sizeof(path), "%s/%zu/feed.json", RSS_CACHE_DIR, hash);
+  return path;
+}
+
+bool RssFeedBrowserActivity::tryLoadFromCache() {
+  const std::string path = cacheFilePath();
+  if (!Storage.exists(path.c_str())) return false;
+
+  const String raw = Storage.readFile(path.c_str());
+  if (raw.isEmpty()) return false;
+
+  JsonDocument doc;
+  if (deserializeJson(doc, raw.c_str()) != DeserializationError::Ok) return false;
+
+  feedTitle = doc["title"] | "";
+  items.clear();
+  const JsonArray arr = doc["items"].as<JsonArray>();
+  items.reserve(arr.size());
+  for (JsonObjectConst obj : arr) {
+    RssItem item;
+    item.title = obj["t"] | "";
+    item.link = obj["l"] | "";
+    item.author = obj["a"] | "";
+    item.published = obj["p"] | "";
+    item.guid = obj["g"] | "";
+    items.push_back(std::move(item));
+  }
+
+  return !items.empty();
+}
+
+void RssFeedBrowserActivity::saveToCache() const {
+  const std::string dir = std::string(RSS_CACHE_DIR) + "/" + std::to_string(std::hash<std::string>{}(feed.url));
+  Storage.mkdir(dir.c_str(), true);
+
+  JsonDocument doc;
+  doc["title"] = feedTitle;
+  JsonArray arr = doc["items"].to<JsonArray>();
+  for (const auto& item : items) {
+    JsonObject obj = arr.add<JsonObject>();
+    obj["t"] = item.title;
+    obj["l"] = item.link;
+    obj["a"] = item.author;
+    obj["p"] = item.published;
+    obj["g"] = item.guid;
+  }
+
+  const std::string path = cacheFilePath();
+  String serialized;
+  serializeJson(doc, serialized);
+  Storage.writeFile(path.c_str(), serialized);
+  LOG_DBG("RSS", "Saved feed cache: %s (%u items)", path.c_str(), (unsigned)items.size());
+}
+
 void RssFeedBrowserActivity::onEnter() {
   Activity::onEnter();
 
@@ -267,9 +328,17 @@ void RssFeedBrowserActivity::onEnter() {
   feedTitle.clear();
   selectorIndex = 0;
   consumeBack = false;
+  isCachedView = false;
   errorMessage.clear();
   statusMessage = tr(STR_CHECKING_WIFI);
   requestUpdate();
+
+  if (!SETTINGS.rssDynamicFetch && tryLoadFromCache()) {
+    isCachedView = true;
+    state = BrowserState::BROWSING;
+    requestUpdate();
+    return;
+  }
 
   checkAndConnectWifi();
 }
@@ -319,6 +388,13 @@ void RssFeedBrowserActivity::loop() {
       if (!items.empty()) openItem(items[selectorIndex]);
     } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       onGoHome(HomeMenuItem::RSS_READER);
+    } else if (isCachedView && mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+      isCachedView = false;
+      state = BrowserState::CHECK_WIFI;
+      statusMessage = tr(STR_CHECKING_WIFI);
+      requestUpdate();
+      checkAndConnectWifi();
+      return;
     }
 
     if (!items.empty()) {
@@ -347,9 +423,10 @@ void RssFeedBrowserActivity::render(RenderLock&&) {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
 
-  const char* headerTitle =
-      !feed.name.empty() ? feed.name.c_str() : (!feedTitle.empty() ? feedTitle.c_str() : tr(STR_RSS_READER));
-  renderer.drawCenteredText(UI_12_FONT_ID, 15, headerTitle, true, EpdFontFamily::BOLD);
+  std::string headerStr = !feed.name.empty() ? feed.name : (!feedTitle.empty() ? feedTitle : tr(STR_RSS_READER));
+  if (isCachedView) headerStr += " ";
+  if (isCachedView) headerStr += tr(STR_CACHED);
+  renderer.drawCenteredText(UI_12_FONT_ID, 15, headerStr.c_str(), true, EpdFontFamily::BOLD);
 
   if (state == BrowserState::CHECK_WIFI || state == BrowserState::LOADING || state == BrowserState::ARTICLE_LOADING) {
     if (state == BrowserState::ARTICLE_LOADING) {
@@ -425,8 +502,13 @@ void RssFeedBrowserActivity::fetchFeed() {
   feedTitle = parser.getFeedTitle();
   items = std::move(parser).getItems();
   selectorIndex = 0;
+  isCachedView = false;
   state = items.empty() ? BrowserState::ERROR : BrowserState::BROWSING;
-  if (items.empty()) errorMessage = tr(STR_NO_ENTRIES);
+  if (items.empty()) {
+    errorMessage = tr(STR_NO_ENTRIES);
+  } else if (!SETTINGS.rssDynamicFetch) {
+    saveToCache();
+  }
   requestUpdate();
 }
 

@@ -250,6 +250,8 @@ class CrossPointSettings {
   uint8_t language = 0;
   // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
+  // RSS fetch mode: 0 = cache to SD (battery-friendly), 1 = fetch live on every open
+  uint8_t rssDynamicFetch = 0;
 
   ~CrossPointSettings() = default;
 
