@@ -26,6 +26,7 @@ class ElkAppActivity final : public Activity {
   void onExit() override;
   void loop() override;
   void render(RenderLock&&) override;
+  bool skipLoopDelay() override { return true; }
 
  private:
   std::string scriptPath;
@@ -33,6 +34,8 @@ class ElkAppActivity final : public Activity {
   struct js* elkJs = nullptr;
   ElkContext elkCtx;
   bool hasError = false;
+  bool finishRequested = false;
 
   void callJsFn(const char* fnCall);
+  void requestFinish();
 };

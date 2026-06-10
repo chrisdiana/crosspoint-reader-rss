@@ -112,10 +112,11 @@ std::vector<ScriptApp> loadScriptApps() {
 
     parseMetadata(headerBuf, bytesRead, app.name, app.icon);
 
-    apps.push_back(std::move(app));
     LOG_DBG("SCRIPTS", "Found: %s (%s)", app.name.c_str(), app.scriptPath.c_str());
+    apps.push_back(std::move(app));
   }
 
+  LOG_INF("SCRIPTS", "Scanned %s: %d app(s)", APPS_DIR, (int)apps.size());
   return apps;
 }
 

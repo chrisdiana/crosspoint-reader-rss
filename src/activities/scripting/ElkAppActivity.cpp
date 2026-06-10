@@ -10,6 +10,12 @@
 
 void ElkAppActivity::onEnter() {
   Activity::onEnter();
+  LOG_INF("ELK", "Opening: %s (heap=%u)", scriptPath.c_str(), (unsigned)ELK_HEAP_SIZE);
+
+  // Scripts draw in the documented Portrait coordinate system. Force it here so
+  // we don't inherit a Landscape/inverted orientation left by a reader session
+  // (which rendered the script's text rotated/backwards).
+  renderer.setOrientation(GfxRenderer::Orientation::Portrait);
 
   elkHeap = makeUniqueNoThrow<uint8_t[]>(ELK_HEAP_SIZE);
   if (!elkHeap) {
@@ -28,14 +34,20 @@ void ElkAppActivity::onEnter() {
     return;
   }
 
-  // Cap C stack usage so deeply-recursive scripts can't overflow the ESP32-C3 task stack.
-  js_setmaxcss(elkJs, 512);
+  // Cap C stack usage so deeply-recursive scripts can't overflow the main
+  // loop task stack (8192 bytes), where onEnter()/loop() run. 2048 was too low:
+  // even a simple script with a nested if-in-function needs ~2.5-3.5 KB of C
+  // stack to parse, which surfaced as a misleading "parse error". 4096 covers
+  // that with margin while still guarding against runaway recursion.
+  js_setmaxcss(elkJs, 4096);
 
   elkCtx.elk = elkJs;
   elkCtx.renderer = &renderer;
   elkCtx.input = &mappedInput;
-  elkCtx.finishFn = [this] { finish(); };
+  elkCtx.finishFn = [this] { requestFinish(); };
   elkCtx.needsUpdate = false;
+  elkCtx.framebufferDirty = false;
+  elkCtx.updatePending = false;
 
   ElkBindings::install(&elkCtx);
 
@@ -57,12 +69,14 @@ void ElkAppActivity::onEnter() {
   }
 
   LOG_DBG("ELK", "Loaded: %s", scriptPath.c_str());
-  callJsFn("onEnter()");
 
-  requestUpdate();
+  elkCtx.needsUpdate = false;
+  callJsFn("onEnter()");
+  if (elkCtx.needsUpdate) requestUpdate();
 }
 
 void ElkAppActivity::onExit() {
+  LOG_INF("ELK", "onExit");
   callJsFn("onExit()");
   ElkBindings::clear();
   elkJs = nullptr;
@@ -71,15 +85,23 @@ void ElkAppActivity::onExit() {
 }
 
 void ElkAppActivity::loop() {
-  if (hasError) return;
+  if (hasError || finishRequested) return;
+  if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
+      mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    LOG_INF("ELK", "Native Back exit");
+    requestFinish();
+    return;
+  }
   elkCtx.needsUpdate = false;
   callJsFn("loop()");
   if (elkCtx.needsUpdate) requestUpdate();
 }
 
 void ElkAppActivity::render(RenderLock&&) {
-  // JS draws directly to the framebuffer via bindings in loop(); just flush here.
+  // JS drawing bindings take RenderLock when mutating the framebuffer; render
+  // receives the same lock from ActivityManager and flushes a stable buffer.
   renderer.displayBuffer();
+  elkCtx.updatePending = false;
 }
 
 void ElkAppActivity::callJsFn(const char* fnCall) {
@@ -93,4 +115,11 @@ void ElkAppActivity::callJsFn(const char* fnCall) {
       hasError = true;
     }
   }
+}
+
+void ElkAppActivity::requestFinish() {
+  if (finishRequested) return;
+  LOG_INF("ELK", "Finish requested");
+  finishRequested = true;
+  finish();
 }

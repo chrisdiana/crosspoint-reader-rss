@@ -198,6 +198,7 @@ void HomeActivity::loop() {
       if (menuIndex >= sysCount) {
         const int scriptIdx = menuIndex - sysCount;
         if (scriptIdx >= 0 && scriptIdx < static_cast<int>(scriptApps.size())) {
+          LOG_INF("HOME", "Launching script: %s", scriptApps[scriptIdx].scriptPath.c_str());
           activityManager.pushActivity(
               std::make_unique<ElkAppActivity>(renderer, mappedInput, scriptApps[scriptIdx].scriptPath));
         }
@@ -279,12 +280,14 @@ void HomeActivity::render(RenderLock&&) {
     menuIcons.insert(menuIcons.begin(), Book);
   }
 
+  // Menu area starts below the cover tile and ends above the button hints.
+  // The height must account for the cover tile already consumed by menuTop;
+  // omitting it (the old formula) made the rect taller than the screen, so the
+  // last rows drew off the bottom edge — very visible on the shorter X3 panel.
+  const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
+  const int menuHeight = pageHeight - menuTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
   GUI.drawButtonMenu(
-      renderer,
-      Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
-           pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
-                         metrics.homeMenuTopOffset + metrics.buttonHintsHeight)},
-      static_cast<int>(menuItems.size()),
+      renderer, Rect{0, menuTop, pageWidth, menuHeight}, static_cast<int>(menuItems.size()),
       metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
       [&menuItems](int index) { return std::string(menuItems[index]); },
       [&menuIcons](int index) { return menuIcons[index]; });

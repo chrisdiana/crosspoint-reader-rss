@@ -7,6 +7,7 @@
 #include <string>
 
 #include "MappedInputManager.h"
+#include "activities/RenderLock.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 
@@ -97,7 +98,11 @@ void ElkBindings::clear() { activeCtx = nullptr; }
 // --- renderer bindings ---
 
 jsval_t ElkBindings::jsClear(struct js*, jsval_t*, int) {
-  if (activeCtx && activeCtx->renderer) activeCtx->renderer->clearScreen();
+  if (activeCtx && activeCtx->renderer) {
+    RenderLock lock;
+    activeCtx->renderer->clearScreen();
+    activeCtx->framebufferDirty = true;
+  }
   return js_mkundef();
 }
 
@@ -116,7 +121,9 @@ jsval_t ElkBindings::jsText(struct js* js, jsval_t* args, int argc) {
   if (!str) return js_mkundef();
 
   // js_getstr returns a pointer into the Elk heap — it is null-terminated.
+  RenderLock lock;
   activeCtx->renderer->drawText(fontId, x, y, str, black);
+  activeCtx->framebufferDirty = true;
   return js_mkundef();
 }
 
@@ -128,7 +135,9 @@ jsval_t ElkBindings::jsFillRect(struct js* js, jsval_t* args, int argc) {
   const int w = static_cast<int>(js_getnum(args[2]));
   const int h = static_cast<int>(js_getnum(args[3]));
   const bool fill = argc < 5 || js_truthy(js, args[4]);
+  RenderLock lock;
   activeCtx->renderer->fillRect(x, y, w, h, fill);
+  activeCtx->framebufferDirty = true;
   return js_mkundef();
 }
 
@@ -139,7 +148,9 @@ jsval_t ElkBindings::jsDrawRect(struct js* js, jsval_t* args, int argc) {
   const int y = static_cast<int>(js_getnum(args[1]));
   const int w = static_cast<int>(js_getnum(args[2]));
   const int h = static_cast<int>(js_getnum(args[3]));
+  RenderLock lock;
   activeCtx->renderer->drawRect(x, y, w, h, true);
+  activeCtx->framebufferDirty = true;
   return js_mkundef();
 }
 
@@ -154,7 +165,15 @@ jsval_t ElkBindings::jsHeight(struct js*, jsval_t*, int) {
 }
 
 jsval_t ElkBindings::jsFlush(struct js*, jsval_t*, int) {
-  if (activeCtx) activeCtx->needsUpdate = true;
+  if (activeCtx && activeCtx->framebufferDirty && !activeCtx->updatePending) {
+    LOG_DBG("ELK", "renderer.flush accepted");
+    activeCtx->needsUpdate = true;
+    activeCtx->updatePending = true;
+    activeCtx->framebufferDirty = false;
+  } else if (activeCtx) {
+    LOG_DBG("ELK", "renderer.flush ignored dirty=%d pending=%d", activeCtx->framebufferDirty,
+            activeCtx->updatePending);
+  }
   return js_mkundef();
 }
 

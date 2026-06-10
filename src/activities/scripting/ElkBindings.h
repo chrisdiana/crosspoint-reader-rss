@@ -13,6 +13,8 @@ struct ElkContext {
   MappedInputManager* input = nullptr;
   std::function<void()> finishFn;
   bool needsUpdate = false;  // Set by renderer.flush(); checked in loop()
+  bool framebufferDirty = false;
+  bool updatePending = false;
 };
 
 class ElkBindings {

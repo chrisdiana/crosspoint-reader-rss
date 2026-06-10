@@ -66,6 +66,7 @@ void ActivityManager::loop() {
 
   while (pendingAction != PendingAction::None) {
     if (pendingAction == PendingAction::Pop) {
+      LOG_DBG("ACT", "Handling pop");
       RenderLock lock;
 
       if (!currentActivity) {
