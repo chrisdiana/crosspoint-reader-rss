@@ -1,6 +1,8 @@
 #include "HomeActivity.h"
 
 #include <Bitmap.h>
+#include "activities/scripting/ElkAppActivity.h"
+#include "activities/scripting/ScriptAppLoader.h"
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -21,17 +23,19 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+int HomeActivity::getSystemMenuItemCount() const {
+  int count = 4;  // File Browser, Recents, File Transfer, Settings
+  if (hasOpdsServers) count++;
+  if (hasRssFeeds) count++;
+  return count;
+}
+
 int HomeActivity::getMenuItemCount() const {
-  int count = 4;  // File Browser, Recents, File transfer, Settings
+  int count = getSystemMenuItemCount();
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
-  if (hasOpdsServers) {
-    count++;
-  }
-  if (hasRssFeeds) {
-    count++;
-  }
+  count += static_cast<int>(scriptApps.size());
   return count;
 }
 
@@ -117,6 +121,7 @@ void HomeActivity::onEnter() {
 
   hasOpdsServers = OPDS_STORE.hasServers();
   hasRssFeeds = RSS_STORE.hasFeeds();
+  scriptApps = ScriptAppLoader::loadScriptApps();
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   loadRecentBooks(metrics.homeRecentBooksCount);
@@ -131,9 +136,8 @@ void HomeActivity::onEnter() {
 
 void HomeActivity::onExit() {
   Activity::onExit();
-
-  // Free the stored cover buffer if any
   freeCoverBuffer();
+  scriptApps.clear();
 }
 
 bool HomeActivity::storeCoverBuffer() {
@@ -190,27 +194,36 @@ void HomeActivity::loop() {
       onSelectBook(recentBooks[selectorIndex].path);
     } else {
       const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
-      switch (indexToMenuItem(menuIndex, hasOpdsServers, hasRssFeeds)) {
-        case HomeMenuItem::FILE_BROWSER:
-          onFileBrowserOpen();
-          break;
-        case HomeMenuItem::RECENTS:
-          onRecentsOpen();
-          break;
-        case HomeMenuItem::OPDS_BROWSER:
-          onOpdsBrowserOpen();
-          break;
-        case HomeMenuItem::RSS_READER:
-          onRssReaderOpen();
-          break;
-        case HomeMenuItem::FILE_TRANSFER:
-          onFileTransferOpen();
-          break;
-        case HomeMenuItem::SETTINGS_MENU:
-          onSettingsOpen();
-          break;
-        default:
-          break;
+      const int sysCount = getSystemMenuItemCount();
+      if (menuIndex >= sysCount) {
+        const int scriptIdx = menuIndex - sysCount;
+        if (scriptIdx >= 0 && scriptIdx < static_cast<int>(scriptApps.size())) {
+          activityManager.pushActivity(
+              std::make_unique<ElkAppActivity>(renderer, mappedInput, scriptApps[scriptIdx].scriptPath));
+        }
+      } else {
+        switch (indexToMenuItem(menuIndex, hasOpdsServers, hasRssFeeds)) {
+          case HomeMenuItem::FILE_BROWSER:
+            onFileBrowserOpen();
+            break;
+          case HomeMenuItem::RECENTS:
+            onRecentsOpen();
+            break;
+          case HomeMenuItem::OPDS_BROWSER:
+            onOpdsBrowserOpen();
+            break;
+          case HomeMenuItem::RSS_READER:
+            onRssReaderOpen();
+            break;
+          case HomeMenuItem::FILE_TRANSFER:
+            onFileTransferOpen();
+            break;
+          case HomeMenuItem::SETTINGS_MENU:
+            onSettingsOpen();
+            break;
+          default:
+            break;
+        }
       }
     }
   }
@@ -252,6 +265,12 @@ void HomeActivity::render(RenderLock&&) {
     const size_t insertIndex = hasOpdsServers ? 3 : 2;
     menuItems.insert(menuItems.begin() + insertIndex, tr(STR_RSS_READER));
     menuIcons.insert(menuIcons.begin() + insertIndex, Library);
+  }
+
+  // Append SD-card script apps after system items.
+  for (const auto& app : scriptApps) {
+    menuItems.push_back(app.name.c_str());
+    menuIcons.push_back(app.icon);
   }
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {

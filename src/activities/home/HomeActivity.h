@@ -4,6 +4,7 @@
 
 #include "./FileBrowserActivity.h"
 #include "activities/Activity.h"
+#include "activities/scripting/ScriptApp.h"
 #include "util/ButtonNavigator.h"
 
 struct RecentBook;
@@ -29,6 +30,7 @@ class HomeActivity final : public Activity {
   int coverRectW = 0;
   int coverRectH = 0;
   std::vector<RecentBook> recentBooks;
+  std::vector<ScriptApp> scriptApps;
   const HomeMenuItem initialMenuItem;
 
   // Convert HomeMenuItem to menu index (used in onEnter)
@@ -68,6 +70,7 @@ class HomeActivity final : public Activity {
   void onRssReaderOpen();
 
   int getMenuItemCount() const;
+  int getSystemMenuItemCount() const;
   bool storeCoverBuffer();    // Store frame buffer for cover image
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover
   void freeCoverBuffer();     // Free the stored cover buffer
