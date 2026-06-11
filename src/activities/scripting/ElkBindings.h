@@ -48,6 +48,7 @@ class ElkBindings {
 
   // storage.*
   static jsval_t jsStorageRead(struct js*, jsval_t*, int);
+  static jsval_t jsStorageReadNumber(struct js*, jsval_t*, int);
   static jsval_t jsStorageWrite(struct js*, jsval_t*, int);
 
   // app.*

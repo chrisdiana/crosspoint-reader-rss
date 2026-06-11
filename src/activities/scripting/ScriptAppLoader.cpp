@@ -37,6 +37,13 @@ static std::string stemFromPath(const char* path) {
   return dot ? std::string(start, dot - start) : std::string(start);
 }
 
+static bool isHiddenScriptSidecar(const char* name) {
+  if (!name || name[0] == '\0') return true;
+  // macOS writes AppleDouble sidecars such as ._counter.js to FAT/exFAT
+  // volumes. They are metadata blobs, not runnable scripts.
+  return name[0] == '.';
+}
+
 static void parseMetadata(const char* buf, size_t len, std::string& outName, UIIcon& outIcon) {
   const char* p = buf;
   const char* end = buf + len;
@@ -89,6 +96,7 @@ std::vector<ScriptApp> loadScriptApps() {
 
   for (auto entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
     entry.getName(nameBuf, sizeof(nameBuf));
+    if (entry.isDirectory() || isHiddenScriptSidecar(nameBuf)) continue;
 
     // Only process .js files
     const size_t nameLen = strlen(nameBuf);

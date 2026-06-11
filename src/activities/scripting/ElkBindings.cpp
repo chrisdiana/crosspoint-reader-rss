@@ -3,6 +3,7 @@
 #include <HalStorage.h>
 #include <Logging.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -36,6 +37,17 @@ static MappedInputManager::Button mapButton(int jsId) {
     case 5: return MappedInputManager::Button::Down;
     default: return MappedInputManager::Button::Back;
   }
+}
+
+static std::string jsValueToText(struct js* js, jsval_t value) {
+  if (js_type(value) == JS_STR) {
+    size_t len = 0;
+    const char* raw = js_getstr(js, value, &len);
+    return raw ? std::string(raw, len) : std::string();
+  }
+
+  const char* text = js_str(js, value);
+  return text ? std::string(text) : std::string();
 }
 
 void ElkBindings::install(ElkContext* ctx) {
@@ -83,6 +95,7 @@ void ElkBindings::install(ElkContext* ctx) {
   // storage object
   jsval_t storage = js_mkobj(js);
   js_set(js, storage, "read", js_mkfun(jsStorageRead));
+  js_set(js, storage, "readNumber", js_mkfun(jsStorageReadNumber));
   js_set(js, storage, "write", js_mkfun(jsStorageWrite));
   js_set(js, glob, "storage", storage);
 
@@ -116,13 +129,10 @@ jsval_t ElkBindings::jsText(struct js* js, jsval_t* args, int argc) {
   const int y = static_cast<int>(js_getnum(args[2]));
   const bool black = argc < 5 || js_truthy(js, args[4]);
 
-  size_t len = 0;
-  const char* str = js_getstr(js, args[3], &len);
-  if (!str) return js_mkundef();
+  const std::string text = jsValueToText(js, args[3]);
 
-  // js_getstr returns a pointer into the Elk heap — it is null-terminated.
   RenderLock lock;
-  activeCtx->renderer->drawText(fontId, x, y, str, black);
+  activeCtx->renderer->drawText(fontId, x, y, text.c_str(), black);
   activeCtx->framebufferDirty = true;
   return js_mkundef();
 }
@@ -226,16 +236,31 @@ jsval_t ElkBindings::jsStorageRead(struct js* js, jsval_t* args, int argc) {
   return js_mkstr(js, content.c_str(), content.length());
 }
 
+jsval_t ElkBindings::jsStorageReadNumber(struct js* js, jsval_t* args, int argc) {
+  if (!activeCtx || argc < 1) return argc >= 2 ? args[1] : js_mknum(0);
+  size_t len = 0;
+  const char* path = js_getstr(js, args[0], &len);
+  if (!path) return argc >= 2 ? args[1] : js_mknum(0);
+
+  std::string pathStr(path, len);
+  const String content = Storage.readFile(pathStr.c_str());
+  if (content.isEmpty()) return argc >= 2 ? args[1] : js_mknum(0);
+
+  char* end = nullptr;
+  const double value = std::strtod(content.c_str(), &end);
+  if (end == content.c_str()) return argc >= 2 ? args[1] : js_mknum(0);
+  return js_mknum(value);
+}
+
 jsval_t ElkBindings::jsStorageWrite(struct js* js, jsval_t* args, int argc) {
   if (!activeCtx || argc < 2) return js_mkfalse();
   size_t pathLen = 0;
-  size_t dataLen = 0;
   const char* path = js_getstr(js, args[0], &pathLen);
-  const char* data = js_getstr(js, args[1], &dataLen);
-  if (!path || !data) return js_mkfalse();
+  if (!path) return js_mkfalse();
 
   std::string pathStr(path, pathLen);
-  const bool ok = Storage.writeFile(pathStr.c_str(), String(data));
+  const std::string data = jsValueToText(js, args[1]);
+  const bool ok = Storage.writeFile(pathStr.c_str(), String(data.c_str()));
   return ok ? js_mktrue() : js_mkfalse();
 }
 
@@ -248,7 +273,7 @@ jsval_t ElkBindings::jsAppFinish(struct js*, jsval_t*, int) {
 
 jsval_t ElkBindings::jsAppLog(struct js* js, jsval_t* args, int argc) {
   if (argc < 1) return js_mkundef();
-  const char* msg = js_str(js, args[0]);
-  if (msg) LOG_INF("JS", "%s", msg);
+  const std::string msg = jsValueToText(js, args[0]);
+  LOG_INF("JS", "%s", msg.c_str());
   return js_mkundef();
 }
