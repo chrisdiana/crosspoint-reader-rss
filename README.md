@@ -10,9 +10,17 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 
 ![CrossPoint Reader running on Xteink device](./docs/images/cover.jpg)
 
+## About this fork
+
+CrossPoint Reader RSS is intended to stay close to the main [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader) project while adding a small set of extra features. The goal is to keep syncing upstream improvements from the main firmware and carry focused additions here, including the dynamic RSS reader and SD-card app scripting.
+
+App scripting lets you place simple JavaScript files on the SD card and launch them from the device. Scripts run through the embedded Elk JavaScript engine and can use firmware-provided APIs for drawing, buttons, storage, and basic network access, so small tools and experiments can be added without rebuilding the firmware. See the [app scripting editor and API reference](./docs/scripting/editor.html) for examples and supported APIs.
+
 ## What can CrossPoint do?
 
 - **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more.
+
+- **RSS and SD-card apps**: dynamic RSS reader support plus custom JavaScript apps loaded from the SD card.
 
 - **Various formats**: native handling for `.epub`, `.xtc/.xtch`, `.txt`, and `.bmp`.
 
@@ -138,6 +146,7 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 ## Documentation
 
 - [User Guide](./USER_GUIDE.md)
+- [App scripting editor and API reference](./docs/scripting/editor.html)
 - [Web server usage](./docs/webserver.md)
 - [Web server endpoints](./docs/webserver-endpoints.md)
 - [Project scope](./SCOPE.md)
