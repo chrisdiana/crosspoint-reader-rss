@@ -798,7 +798,7 @@ let loop = function() {
 };</code></pre>
           </section>
 
-          <section class="doc-section" data-doc-keywords="elk compatibility javascript subset parser memory stack closures limitations">
+          <section class="doc-section" data-doc-keywords="elk compatibility javascript subset parser memory stack closures limitations size lines heap game budget">
             <h2>Elk Compatibility</h2>
             <ul>
               <li>Elk is a small JavaScript engine, not a full browser runtime. Avoid DOM APIs, timers, promises, modules, classes, and large libraries.</li>
@@ -810,6 +810,17 @@ let loop = function() {
               <li>Avoid <code>while</code> loops. This Elk build reports <code>'while' not implemented</code>; use bounded <code>for</code> loops only where necessary.</li>
               <li>Avoid repeated full redraws in <code>loop()</code> for complex screens. Use dirty rectangles or small redraw helpers for changed regions.</li>
             </ul>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="app size budget lines elk heap memory max game warning limit">
+            <h2>App Size Budget</h2>
+            <p>The current firmware gives each script a <code>32 KB</code> Elk heap and a <code>4096 byte</code> C-stack parse/eval cap. The source file is also loaded into RAM before evaluation.</p>
+            <ul>
+              <li><strong>Safe target:</strong> about <code>400-900</code> lines, or roughly <code>20 KB</code> of source.</li>
+              <li><strong>Needs device testing:</strong> about <code>900-1400</code> lines, or <code>20-32 KB</code> of source.</li>
+              <li><strong>Likely too large:</strong> more than <code>1400</code> lines or <code>32 KB</code> of source, unless the code is unusually simple.</li>
+            </ul>
+            <div class="doc-callout">Line count is only a rough signal. Long strings, arrays, object-heavy state, nested functions, and large inline data use much more memory than simple scalar logic.</div>
           </section>
 
           <div id="docsEmpty" class="doc-empty" hidden>No matching SDK entries.</div>
@@ -862,6 +873,10 @@ let onExit = function() {
     const BTN_DOWN = 5;
     const BUTTONS = { BTN_BACK, BTN_OK, BTN_LEFT, BTN_RIGHT, BTN_UP, BTN_DOWN };
     const BUTTON_NAMES = Object.fromEntries(Object.entries(BUTTONS).map(([name, value]) => [value, name]));
+    const ELK_SAFE_SOURCE_BYTES = 20 * 1024;
+    const ELK_HARD_SOURCE_BYTES = 32 * 1024;
+    const ELK_SAFE_LINES = 900;
+    const ELK_HARD_LINES = 1400;
     const ICON_NAMES = new Set([
       "Folder",
       "Text",
@@ -1292,6 +1307,13 @@ let onExit = function() {
       const warnings = [];
       const formatErrors = validateScriptFormat(code);
       formatErrors.forEach((error) => warnings.push(`Error: ${error}`));
+      const sourceBytes = new Blob([code]).size;
+      const sourceLines = code.split(/\n/).length;
+      if (sourceBytes > ELK_HARD_SOURCE_BYTES || sourceLines > ELK_HARD_LINES) {
+        warnings.push(`Elk size warning: this script is ${sourceLines} lines / ${sourceBytes} bytes. Current firmware uses a 32 KB Elk heap, so this is likely too large for device testing.`);
+      } else if (sourceBytes > ELK_SAFE_SOURCE_BYTES || sourceLines > ELK_SAFE_LINES) {
+        warnings.push(`Elk size warning: this script is ${sourceLines} lines / ${sourceBytes} bytes. It may run, but test on device early; long strings, arrays, and nested functions can exceed Elk memory/stack limits.`);
+      }
       if (/let\s+\w+\s*=.*;\s*[\s\S]*\bloop\s*=\s*function[\s\S]*renderer\.flush\s*\(/.test(code)) {
         warnings.push("E-ink warning: `renderer.flush()` inside loop can cause repeated full refreshes. Prefer drawing in onEnter or only after state changes.");
       }
