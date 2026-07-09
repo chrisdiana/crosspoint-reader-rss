@@ -2,7 +2,11 @@
 
 > Fork of CrossPoint Reader with RSS + App Scripting
 
-[![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
+## About this fork
+
+CrossPoint Reader RSS is intended to stay close to the main [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader) project while adding a small set of extra features. The goal is to keep syncing upstream improvements from the main firmware and carry focused additions here, including the dynamic RSS reader and SD-card app scripting.
+
+App scripting lets you place simple JavaScript files on the SD card and launch them from the device. Scripts run through the embedded Elk JavaScript engine and can use firmware-provided APIs for drawing, buttons, storage, and basic network access, so small tools and experiments can be added without rebuilding the firmware. See the [app scripting editor and API reference](./docs/scripting/editor.html) for examples and supported APIs.
 
 CrossPoint is open-source e-reader firmware - community-built, fully hackable, free forever. It's maintained by a growing community of developers and readers who believe your device should do what you want - not what a manufacturer decided for you.
 
@@ -10,11 +14,7 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 
 ![CrossPoint Reader running on Xteink device](./docs/images/cover.jpg)
 
-## About this fork
-
-CrossPoint Reader RSS is intended to stay close to the main [CrossPoint Reader](https://github.com/crosspoint-reader/crosspoint-reader) project while adding a small set of extra features. The goal is to keep syncing upstream improvements from the main firmware and carry focused additions here, including the dynamic RSS reader and SD-card app scripting.
-
-App scripting lets you place simple JavaScript files on the SD card and launch them from the device. Scripts run through the embedded Elk JavaScript engine and can use firmware-provided APIs for drawing, buttons, storage, and basic network access, so small tools and experiments can be added without rebuilding the firmware. See the [app scripting editor and API reference](./docs/scripting/editor.html) for examples and supported APIs.
+[![Fund contributors](https://img.shields.io/badge/%F0%9F%91%91_Fund_contributors-royalty.dev-BB953A?style=for-the-badge&labelColor=1a1a1a)](https://app.royalty.dev/crosspoint-reader/crosspoint-reader)
 
 ## What can CrossPoint do?
 
