@@ -6,6 +6,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -512,10 +513,32 @@ void LyraTheme::drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) c
 void LyraTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                const std::function<std::string(int index)>& buttonLabel,
                                const std::function<UIIcon(int index)>& rowIcon) const {
-  for (int i = 0; i < buttonCount; ++i) {
+  // Paginate so the menu never draws rows past the bottom of `rect`. Without
+  // this, every extra item (e.g. SD-card script apps) pushes the last rows off
+  // the screen — visible on the shorter X3 panel as GFX "Outside range" spam.
+  const int rowPitch = LyraMetrics::values.menuRowHeight + LyraMetrics::values.menuSpacing;
+  const int pageItems = std::max(1, (rect.height + LyraMetrics::values.menuSpacing) / rowPitch);
+  const int activeIndex = std::max(0, selectedIndex);
+  const int pageStartIndex = activeIndex / pageItems * pageItems;
+  const int pageEndIndex = std::min(buttonCount, pageStartIndex + pageItems);
+
+  // Scroll indicator when there is more than one page.
+  if (buttonCount > pageItems) {
+    const int totalPages = (buttonCount + pageItems - 1) / pageItems;
+    const int currentPage = pageStartIndex / pageItems;
+    const int scrollAreaHeight = rect.height;
+    const int scrollBarHeight = (scrollAreaHeight * pageItems) / buttonCount;
+    const int scrollBarY = rect.y + ((scrollAreaHeight - scrollBarHeight) * currentPage) / (totalPages - 1);
+    const int scrollBarX = rect.x + rect.width - LyraMetrics::values.scrollBarRightOffset;
+    renderer.drawLine(scrollBarX, rect.y, scrollBarX, rect.y + scrollAreaHeight, true);
+    renderer.fillRect(scrollBarX - LyraMetrics::values.scrollBarWidth, scrollBarY, LyraMetrics::values.scrollBarWidth,
+                      scrollBarHeight, true);
+  }
+
+  for (int i = pageStartIndex; i < pageEndIndex; ++i) {
+    const int pageRow = i - pageStartIndex;
     int tileWidth = rect.width - LyraMetrics::values.contentSidePadding * 2;
-    Rect tileRect = Rect{rect.x + LyraMetrics::values.contentSidePadding,
-                         rect.y + i * (LyraMetrics::values.menuRowHeight + LyraMetrics::values.menuSpacing), tileWidth,
+    Rect tileRect = Rect{rect.x + LyraMetrics::values.contentSidePadding, rect.y + pageRow * rowPitch, tileWidth,
                          LyraMetrics::values.menuRowHeight};
 
     const bool selected = selectedIndex == i;

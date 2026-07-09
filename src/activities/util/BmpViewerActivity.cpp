@@ -5,15 +5,22 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <JpegToBmpConverter.h>
+#include <PngToBmpConverter.h>
 
 #include <algorithm>
+#include <cmath>
 
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+namespace {
+constexpr const char* IMAGE_VIEWER_TEMP_BMP = "/.crosspoint/image-viewer.bmp";
+}
+
 BmpViewerActivity::BmpViewerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string path)
-    : Activity("BmpViewer", renderer, mappedInput), filePath(std::move(path)) {}
+    : Activity("ImageViewer", renderer, mappedInput), filePath(std::move(path)) {}
 
 void BmpViewerActivity::loadSiblingImages() {
   siblingImages.clear();
@@ -37,7 +44,7 @@ void BmpViewerActivity::loadSiblingImages() {
       file.getName(name, sizeof(name));
       if (name[0] != '.') {
         std::string fname(name);
-        if (fname.length() >= 4 && fname.substr(fname.length() - 4) == ".bmp") {
+        if (FsHelpers::hasImageExtension(fname)) {
           siblingImages.push_back(fname);
         }
       }
@@ -56,6 +63,52 @@ void BmpViewerActivity::loadSiblingImages() {
   }
 }
 
+bool BmpViewerActivity::prepareRenderableBmp(int pageWidth, int pageHeight, std::string& renderPath) {
+  renderBmpPath.clear();
+  if (FsHelpers::hasBmpExtension(filePath)) {
+    renderPath = filePath;
+    renderBmpPath = renderPath;
+    return true;
+  }
+
+  if (!FsHelpers::hasJpgExtension(filePath) && !FsHelpers::hasPngExtension(filePath)) {
+    LOG_ERR("IMG", "Unsupported image file: %s", filePath.c_str());
+    return false;
+  }
+
+  Storage.mkdir("/.crosspoint");
+
+  HalFile source;
+  if (!Storage.openFileForRead("IMG", filePath, source)) {
+    LOG_ERR("IMG", "Could not open image: %s", filePath.c_str());
+    return false;
+  }
+
+  HalFile tempBmp;
+  if (!Storage.openFileForWrite("IMG", IMAGE_VIEWER_TEMP_BMP, tempBmp)) {
+    LOG_ERR("IMG", "Could not open temp BMP: %s", IMAGE_VIEWER_TEMP_BMP);
+    source.close();
+    return false;
+  }
+
+  const bool converted = FsHelpers::hasJpgExtension(filePath)
+                             ? JpegToBmpConverter::jpegFileToBmpStreamWithSize(source, tempBmp, pageWidth, pageHeight,
+                                                                               false)
+                             : PngToBmpConverter::pngFileToBmpStreamWithSize(source, tempBmp, pageWidth, pageHeight,
+                                                                             false);
+  tempBmp.close();
+  source.close();
+
+  if (!converted) {
+    LOG_ERR("IMG", "Failed to convert image: %s", filePath.c_str());
+    return false;
+  }
+
+  renderPath = IMAGE_VIEWER_TEMP_BMP;
+  renderBmpPath = renderPath;
+  return true;
+}
+
 void BmpViewerActivity::onEnter() {
   Activity::onEnter();
 
@@ -69,8 +122,19 @@ void BmpViewerActivity::onEnter() {
   const auto pageHeight = renderer.getScreenHeight();
   Rect popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   GUI.fillPopupProgress(renderer, popupRect, 20);  // Initial 20% progress
+
+  std::string renderPath;
+  if (!prepareRenderableBmp(pageWidth, pageHeight, renderPath)) {
+    renderer.clearScreen();
+    renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, "Could not render image");
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    return;
+  }
+
   // 1. Open the file
-  if (Storage.openFileForRead("BMP", filePath, file)) {
+  if (Storage.openFileForRead("BMP", renderPath, file)) {
     Bitmap bitmap(file, true);
 
     // 2. Parse headers to get dimensions
@@ -148,7 +212,8 @@ void BmpViewerActivity::doSetSleepCover() {
 
   bool success = false;
   HalFile inFile, outFile;
-  if (Storage.openFileForRead("BMP", filePath, inFile)) {
+  const std::string sourcePath = renderBmpPath.empty() ? filePath : renderBmpPath;
+  if (Storage.openFileForRead("BMP", sourcePath, inFile)) {
     if (Storage.openFileForWrite("BMP", "/sleep.bmp", outFile)) {
       char buffer[2048];
       int bytesRead;

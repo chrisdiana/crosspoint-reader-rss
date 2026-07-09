@@ -1,0 +1,10 @@
+{
+  "name": "Elk",
+  "version": "3.0.0",
+  "description": "Tiny JavaScript engine for embedded systems",
+  "license": "GPL-2.0",
+  "homepage": "https://github.com/cesanta/elk",
+  "build": {
+    "srcFilter": ["+<*.c>", "+<*.h>"]
+  }
+}

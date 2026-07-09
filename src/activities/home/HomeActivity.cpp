@@ -1,6 +1,8 @@
 #include "HomeActivity.h"
 
 #include <Bitmap.h>
+#include "activities/scripting/ElkAppActivity.h"
+#include "activities/scripting/ScriptAppLoader.h"
 #include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
@@ -21,17 +23,19 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 
+int HomeActivity::getSystemMenuItemCount() const {
+  int count = 4;  // File Browser, Recents, File Transfer, Settings
+  if (hasOpdsServers) count++;
+  if (hasRssFeeds) count++;
+  return count;
+}
+
 int HomeActivity::getMenuItemCount() const {
-  int count = 4;  // File Browser, Recents, File transfer, Settings
+  int count = getSystemMenuItemCount();
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
-  if (hasOpdsServers) {
-    count++;
-  }
-  if (hasRssFeeds) {
-    count++;
-  }
+  count += static_cast<int>(scriptApps.size());
   return count;
 }
 
@@ -117,6 +121,7 @@ void HomeActivity::onEnter() {
 
   hasOpdsServers = OPDS_STORE.hasServers();
   hasRssFeeds = RSS_STORE.hasFeeds();
+  scriptApps = ScriptAppLoader::loadScriptApps();
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   loadRecentBooks(metrics.homeRecentBooksCount);
@@ -131,9 +136,8 @@ void HomeActivity::onEnter() {
 
 void HomeActivity::onExit() {
   Activity::onExit();
-
-  // Free the stored cover buffer if any
   freeCoverBuffer();
+  scriptApps.clear();
 }
 
 bool HomeActivity::storeCoverBuffer() {
@@ -190,27 +194,37 @@ void HomeActivity::loop() {
       onSelectBook(recentBooks[selectorIndex].path);
     } else {
       const int menuIndex = selectorIndex - static_cast<int>(recentBooks.size());
-      switch (indexToMenuItem(menuIndex, hasOpdsServers, hasRssFeeds)) {
-        case HomeMenuItem::FILE_BROWSER:
-          onFileBrowserOpen();
-          break;
-        case HomeMenuItem::RECENTS:
-          onRecentsOpen();
-          break;
-        case HomeMenuItem::OPDS_BROWSER:
-          onOpdsBrowserOpen();
-          break;
-        case HomeMenuItem::RSS_READER:
-          onRssReaderOpen();
-          break;
-        case HomeMenuItem::FILE_TRANSFER:
-          onFileTransferOpen();
-          break;
-        case HomeMenuItem::SETTINGS_MENU:
-          onSettingsOpen();
-          break;
-        default:
-          break;
+      const int sysCount = getSystemMenuItemCount();
+      if (menuIndex >= sysCount) {
+        const int scriptIdx = menuIndex - sysCount;
+        if (scriptIdx >= 0 && scriptIdx < static_cast<int>(scriptApps.size())) {
+          LOG_INF("HOME", "Launching script: %s", scriptApps[scriptIdx].scriptPath.c_str());
+          activityManager.pushActivity(
+              std::make_unique<ElkAppActivity>(renderer, mappedInput, scriptApps[scriptIdx].scriptPath));
+        }
+      } else {
+        switch (indexToMenuItem(menuIndex, hasOpdsServers, hasRssFeeds)) {
+          case HomeMenuItem::FILE_BROWSER:
+            onFileBrowserOpen();
+            break;
+          case HomeMenuItem::RECENTS:
+            onRecentsOpen();
+            break;
+          case HomeMenuItem::OPDS_BROWSER:
+            onOpdsBrowserOpen();
+            break;
+          case HomeMenuItem::RSS_READER:
+            onRssReaderOpen();
+            break;
+          case HomeMenuItem::FILE_TRANSFER:
+            onFileTransferOpen();
+            break;
+          case HomeMenuItem::SETTINGS_MENU:
+            onSettingsOpen();
+            break;
+          default:
+            break;
+        }
       }
     }
   }
@@ -254,18 +268,26 @@ void HomeActivity::render(RenderLock&&) {
     menuIcons.insert(menuIcons.begin() + insertIndex, Library);
   }
 
+  // Append SD-card script apps after system items.
+  for (const auto& app : scriptApps) {
+    menuItems.push_back(app.name.c_str());
+    menuIcons.push_back(app.icon);
+  }
+
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme
     menuItems.insert(menuItems.begin(), tr(STR_CONTINUE_READING));
     menuIcons.insert(menuIcons.begin(), Book);
   }
 
+  // Menu area starts below the cover tile and ends above the button hints.
+  // The height must account for the cover tile already consumed by menuTop;
+  // omitting it (the old formula) made the rect taller than the screen, so the
+  // last rows drew off the bottom edge — very visible on the shorter X3 panel.
+  const int menuTop = metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset;
+  const int menuHeight = pageHeight - menuTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
   GUI.drawButtonMenu(
-      renderer,
-      Rect{0, metrics.homeTopPadding + metrics.homeCoverTileHeight + metrics.homeMenuTopOffset, pageWidth,
-           pageHeight - (metrics.headerHeight + metrics.homeTopPadding + metrics.verticalSpacing +
-                         metrics.homeMenuTopOffset + metrics.buttonHintsHeight)},
-      static_cast<int>(menuItems.size()),
+      renderer, Rect{0, menuTop, pageWidth, menuHeight}, static_cast<int>(menuItems.size()),
       metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - recentBooks.size(),
       [&menuItems](int index) { return std::string(menuItems[index]); },
       [&menuIcons](int index) { return menuIcons[index]; });

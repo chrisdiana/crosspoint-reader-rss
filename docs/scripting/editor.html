@@ -1,0 +1,1455 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CrossPoint Script Editor</title>
+  <style>
+    :root {
+      --bg: #f4f4ef;
+      --panel: #ffffff;
+      --text: #1f2933;
+      --muted: #68727d;
+      --line: #d7d9d2;
+      --accent: #1f6feb;
+      --accent-2: #0f766e;
+      --danger: #b42318;
+      --code-bg: #101820;
+      --code-text: #e6edf3;
+      --shadow: 0 10px 30px rgba(31, 41, 51, 0.12);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      height: 100vh;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .app {
+      height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(360px, 1fr) minmax(380px, 520px);
+      overflow: hidden;
+    }
+
+    .editor-pane,
+    .emulator-pane {
+      min-width: 0;
+      min-height: 0;
+      padding: 18px;
+    }
+
+    .editor-pane {
+      display: grid;
+      grid-template-rows: auto minmax(360px, 1fr) minmax(150px, 24vh);
+      gap: 12px;
+      border-right: 1px solid var(--line);
+    }
+
+    .toolbar,
+    .device-toolbar,
+    .buttons,
+    .storage-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    button,
+    select,
+    input {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 6px;
+      font: inherit;
+    }
+
+    button {
+      padding: 0 11px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #ffffff;
+    }
+
+    button.secondary {
+      background: #edf8f6;
+      border-color: #b9ded8;
+      color: #0f4f49;
+    }
+
+    button.danger {
+      background: #fff0ee;
+      border-color: #f1b8b1;
+      color: var(--danger);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .code-editor,
+    textarea {
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--code-bg);
+      color: var(--code-text);
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      outline: none;
+    }
+
+    .code-editor {
+      overflow: hidden;
+    }
+
+    textarea {
+      resize: none;
+      padding: 14px;
+      tab-size: 2;
+    }
+
+    .code-editor:focus-within,
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.18);
+    }
+
+    .fallback-editor {
+      display: none;
+    }
+
+    .no-ace .code-editor {
+      display: none;
+    }
+
+    .no-ace .fallback-editor {
+      display: block;
+    }
+
+    .emulator-pane {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 12px;
+      background: #eceee7;
+      overflow: hidden;
+    }
+
+    .tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      padding: 4px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.7);
+    }
+
+    .tab {
+      border: 0;
+      background: transparent;
+    }
+
+    .tab.active {
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .side-panel {
+      min-height: 0;
+      display: none;
+    }
+
+    .side-panel.active {
+      display: grid;
+    }
+
+    .preview-panel {
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      gap: 12px;
+    }
+
+    .docs-panel {
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    .docs-search {
+      width: 100%;
+      padding: 0 10px;
+      background: var(--panel);
+    }
+
+    .docs {
+      min-height: 0;
+      max-height: 100%;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      padding: 14px;
+    }
+
+    .doc-section {
+      border-bottom: 1px solid var(--line);
+      padding: 0 0 14px;
+      margin: 0 0 14px;
+    }
+
+    .doc-section:last-child {
+      border-bottom: 0;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .doc-section h2 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+
+    .doc-section p,
+    .doc-section li {
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+
+    .doc-section ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+
+    .doc-callout {
+      margin: 10px 0;
+      padding: 10px;
+      border: 1px solid #f2c36b;
+      border-radius: 6px;
+      background: #fff8e7;
+      color: #654600;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .doc-section code,
+    .doc-section pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    }
+
+    .doc-section code {
+      color: #111820;
+      background: #eef0ea;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+
+    .doc-section pre {
+      overflow: auto;
+      margin: 8px 0 0;
+      padding: 10px;
+      border-radius: 6px;
+      background: #101820;
+      color: #e6edf3;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .doc-section pre code {
+      color: inherit;
+      background: transparent;
+      border-radius: 0;
+      padding: 0;
+    }
+
+    .doc-grid {
+      display: grid;
+      grid-template-columns: 110px minmax(0, 1fr);
+      gap: 6px 10px;
+      font-size: 13px;
+    }
+
+    .doc-grid code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-weight: 700;
+    }
+
+    .doc-grid span {
+      color: var(--muted);
+    }
+
+    .doc-empty {
+      display: none;
+      padding: 20px;
+      text-align: center;
+      color: var(--muted);
+      border: 1px dashed var(--line);
+      border-radius: 6px;
+    }
+
+    .doc-empty:not([hidden]) {
+      display: block;
+    }
+
+    .screen-wrap {
+      min-height: 0;
+      display: grid;
+      place-items: center;
+      padding: 12px;
+      overflow: auto;
+    }
+
+    .device {
+      width: min(100%, 420px);
+      padding: 18px 14px 20px;
+      border-radius: 8px;
+      background: #222831;
+      box-shadow: var(--shadow);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      aspect-ratio: 528 / 792;
+      image-rendering: pixelated;
+      background: #f9faf5;
+      border: 1px solid #111820;
+    }
+
+    .status {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .stat {
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.7);
+      min-width: 0;
+    }
+
+    .stat strong {
+      display: block;
+      color: var(--text);
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .button-pad {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .button-pad button {
+      height: 42px;
+      user-select: none;
+    }
+
+    .button-pad .wide {
+      grid-column: span 3;
+    }
+
+    .logs,
+    .storage {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 8px;
+    }
+
+    .log-output,
+    .storage-list,
+    .warnings {
+      min-height: 0;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      padding: 10px;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      white-space: pre-wrap;
+    }
+
+    .warnings {
+      max-height: 110px;
+      background: #fffbf0;
+      color: #7a4b00;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    .label {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .file-name {
+      flex: 1;
+      min-width: 170px;
+      padding: 0 10px;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 900px) {
+      body {
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+      }
+
+      .app {
+        height: auto;
+        min-height: 100vh;
+        grid-template-columns: 1fr;
+        overflow: visible;
+      }
+
+      .editor-pane {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .emulator-pane {
+        min-height: 720px;
+      }
+
+      .split {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <section class="editor-pane">
+      <div class="toolbar">
+        <button id="runBtn" class="primary">Run</button>
+        <button id="stopBtn" class="danger" disabled>Stop</button>
+        <button id="stepBtn">Step</button>
+        <button id="resetBtn">Reset</button>
+        <button id="sampleBtn">Sample</button>
+        <button id="saveBtn" class="secondary">Save</button>
+        <button id="downloadBtn">Download</button>
+        <input id="fileName" class="file-name" value="hello.js" aria-label="File name">
+      </div>
+      <div id="aceEditor" class="code-editor" aria-label="JavaScript app editor"></div>
+      <textarea id="code" class="fallback-editor" spellcheck="false" aria-label="JavaScript app editor"></textarea>
+      <div class="split">
+        <section class="logs">
+          <div class="toolbar">
+            <span class="label">Console</span>
+            <button id="clearLogBtn">Clear</button>
+          </div>
+          <div id="logOutput" class="log-output"></div>
+        </section>
+        <section class="storage">
+          <div class="storage-toolbar">
+            <span class="label">Mock Storage</span>
+            <button id="clearStorageBtn">Clear</button>
+          </div>
+          <div id="storageList" class="storage-list"></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="emulator-pane">
+      <div class="tabs" role="tablist" aria-label="Right pane">
+        <button id="previewTab" class="tab active" type="button" role="tab" aria-selected="true"
+                aria-controls="previewPanel" data-panel="previewPanel">Preview</button>
+        <button id="docsTab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="docsPanel"
+                data-panel="docsPanel">SDK Docs</button>
+      </div>
+
+      <div id="previewPanel" class="side-panel preview-panel active" role="tabpanel" aria-labelledby="previewTab">
+        <div class="device-toolbar">
+          <select id="deviceSelect" aria-label="Device">
+            <option value="x3">X3 portrait 528 x 792</option>
+            <option value="x4">X4 portrait 480 x 800</option>
+          </select>
+          <select id="refreshSelect" aria-label="Refresh mode">
+            <option value="fast">Fast e-ink</option>
+            <option value="instant">Instant LCD</option>
+          </select>
+          <span class="hint">Keys: Backspace, Enter, arrows</span>
+        </div>
+
+        <div class="status">
+          <div class="stat">State<strong id="stateStat">stopped</strong></div>
+          <div class="stat">Frame<strong id="frameStat">0</strong></div>
+          <div class="stat">Flushes<strong id="flushStat">0</strong></div>
+          <div class="stat">Size<strong id="sizeStat">528 x 792</strong></div>
+        </div>
+
+        <div class="screen-wrap">
+          <div class="device">
+            <canvas id="screen" width="528" height="792"></canvas>
+          </div>
+        </div>
+
+        <div>
+          <div class="button-pad">
+            <button data-btn="BTN_UP">Up</button>
+            <button data-btn="BTN_OK">OK</button>
+            <button data-btn="BTN_DOWN">Down</button>
+            <button data-btn="BTN_LEFT">Left</button>
+            <button data-btn="BTN_BACK">Back</button>
+            <button data-btn="BTN_RIGHT">Right</button>
+            <button id="pulseBackBtn" class="wide secondary">Pulse Back</button>
+          </div>
+          <div id="warnings" class="warnings"></div>
+        </div>
+      </div>
+
+      <div id="docsPanel" class="side-panel docs-panel" role="tabpanel" aria-labelledby="docsTab" hidden>
+        <input id="docsSearch" class="docs-search" type="search" placeholder="Search SDK docs"
+               aria-label="Search SDK docs">
+        <div id="sdkDocs" class="docs">
+          <section class="doc-section" data-doc-keywords="quick reference api renderer input storage http app constants let var compatibility">
+            <h2>SDK Surface</h2>
+            <p>The firmware installs these globals before your script is evaluated: <code>renderer</code>, <code>input</code>, <code>storage</code>, <code>http</code>, <code>app</code>, button constants, and font constants.</p>
+            <div class="doc-callout"><strong>Elk syntax:</strong> use <code>let</code> for variables and lifecycle hooks. This firmware build does not implement <code>var</code>, and app examples avoid <code>const</code> so browser-tested code stays close to device syntax.</div>
+            <div class="doc-callout"><strong>Preview limit:</strong> this page uses the browser JavaScript engine with SDK mocks. It is useful for layout and input iteration, but it is not Elk. The validator blocks known Elk-incompatible patterns, yet final scripts still need an Elk/device run for parser edge cases.</div>
+            <div class="doc-grid">
+              <code>renderer</code><span>Draw into the e-ink framebuffer and request refreshes.</span>
+              <code>input</code><span>Read edge-triggered and held button state.</span>
+              <code>storage</code><span>Read and write text files and numeric values on the SD card.</span>
+              <code>http</code><span>Fetch text over the network with blocking GET requests.</span>
+              <code>app</code><span>Log to serial and exit the app.</span>
+            </div>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="metadata name icon file path apps home menu">
+            <h2>App Files</h2>
+            <p>Scripts live on the SD card under <code>/.crosspoint/apps/*.js</code>. The home menu scans that folder and launches each file as an app.</p>
+            <div class="doc-callout">The browser editor enforces this app format before running: include <code>@name</code>, include a supported <code>@icon</code>, use <code>let</code> lifecycle hooks, and avoid <code>var</code>.</div>
+            <pre><code>// @name Hello World
+// @icon File</code></pre>
+            <ul>
+              <li><code>@name</code> sets the home menu label. Missing names fall back to the filename without <code>.js</code>.</li>
+              <li><code>@icon</code> accepts <code>Folder</code>, <code>Text</code>, <code>Image</code>, <code>Book</code>, <code>File</code>, <code>Recent</code>, <code>Settings</code>, <code>Transfer</code>, <code>Library</code>, <code>Wifi</code>, <code>Hotspot</code>, or <code>Bookmark</code>. Unknown icons fall back to <code>File</code>.</li>
+            </ul>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="lifecycle onEnter loop onExit finish hooks">
+            <h2>Lifecycle</h2>
+            <p>Declare lifecycle hooks with assignment syntax. This matches the firmware's Elk parser path and keeps browser emulation close to device behavior.</p>
+            <div class="doc-callout">All examples intentionally use <code>let</code>. Do not rewrite them to <code>var</code>; <code>var</code> is unsupported by this Elk build.</div>
+            <pre><code>let onEnter = function() {
+  renderer.clear();
+  renderer.text(FONT_HEADING, 40, 80, "Ready");
+  renderer.flush();
+};
+
+let loop = function() {
+  if (input.pressed(BTN_BACK)) app.finish();
+};
+
+let onExit = function() {
+  app.log("closed");
+};</code></pre>
+            <ul>
+              <li><code>onEnter</code> runs once after the script loads.</li>
+              <li><code>loop</code> runs repeatedly for input and state updates.</li>
+              <li><code>onExit</code> runs when the activity is popped, including after <code>app.finish()</code>.</li>
+            </ul>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="renderer drawing text rect fillRect clear flush width height eink refresh">
+            <h2>Renderer</h2>
+            <div class="doc-grid">
+              <code>renderer.clear()</code><span>Clear the framebuffer to white.</span>
+              <code>renderer.text(font, x, y, text[, black])</code><span>Draw text at portrait coordinates. <code>black</code> defaults to <code>true</code>.</span>
+              <code>renderer.fillRect(x, y, w, h[, black])</code><span>Draw a filled rectangle. <code>black=false</code> draws white.</span>
+              <code>renderer.rect(x, y, w, h)</code><span>Draw a one-pixel outline rectangle.</span>
+              <code>renderer.width()</code><span>Current logical screen width. X3 is 528, X4 is 480 in portrait.</span>
+              <code>renderer.height()</code><span>Current logical screen height. X3 is 792, X4 is 800 in portrait.</span>
+              <code>renderer.flush()</code><span>Request an e-ink refresh for the changed framebuffer.</span>
+            </div>
+            <p>Only call <code>flush()</code> after changing pixels. Calling it every <code>loop()</code> iteration causes repeated X3_DRF refreshes, flicker, ghosting, and delayed input response.</p>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="fonts font constants small ui body heading">
+            <h2>Fonts</h2>
+            <div class="doc-grid">
+              <code>FONT_SMALL</code><span>Small UI/help text.</span>
+              <code>FONT_UI</code><span>Default UI label text.</span>
+              <code>FONT_BODY</code><span>Readable body copy.</span>
+              <code>FONT_HEADING</code><span>Large heading text.</span>
+            </div>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="input buttons pressed released held back ok arrows up down left right">
+            <h2>Input</h2>
+            <div class="doc-grid">
+              <code>input.pressed(button)</code><span><code>true</code> for the loop tick where the button became pressed.</span>
+              <code>input.released(button)</code><span><code>true</code> for the loop tick where the button was released.</span>
+              <code>input.held(button)</code><span><code>true</code> while the button is currently down.</span>
+            </div>
+            <p>Button constants: <code>BTN_BACK</code>, <code>BTN_OK</code>, <code>BTN_LEFT</code>, <code>BTN_RIGHT</code>, <code>BTN_UP</code>, and <code>BTN_DOWN</code>.</p>
+            <p>Use <code>pressed()</code> for menu navigation and one-shot actions. Use <code>held()</code> for continuous movement. Always handle <code>BTN_BACK</code> so the app can exit quickly.</p>
+            <pre><code>let selected = 0;
+let dirty = true;
+
+let draw = function() {
+  renderer.clear();
+  renderer.text(FONT_UI, 32, 60, selected);
+  renderer.text(FONT_SMALL, 32, 110, "UP/DOWN changes, OK selects");
+  renderer.flush();
+};
+
+let loop = function() {
+  if (input.pressed(BTN_BACK)) {
+    app.finish();
+    return;
+  }
+  if (input.pressed(BTN_UP) &amp;&amp; selected &gt; 0) {
+    selected = selected - 1;
+    dirty = true;
+  }
+  if (input.pressed(BTN_DOWN)) {
+    selected = selected + 1;
+    dirty = true;
+  }
+  if (input.pressed(BTN_OK)) {
+    app.log(selected);
+  }
+  if (dirty) {
+    dirty = false;
+    draw();
+  }
+};</code></pre>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="app log finish exit console">
+            <h2>App</h2>
+            <div class="doc-grid">
+              <code>app.log(value)</code><span>Write a value to serial logs. The emulator mirrors it in Console.</span>
+              <code>app.finish()</code><span>Request native activity exit. <code>onExit</code> will run before the app is destroyed.</span>
+            </div>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="storage sd card read write files persistence">
+            <h2>Storage</h2>
+            <div class="doc-grid">
+              <code>storage.read(path)</code><span>Read a text file from the SD card. Returns a string or <code>null</code>. Empty files currently also read as <code>null</code>.</span>
+              <code>storage.readNumber(path[, fallback])</code><span>Read a numeric value from a text file. Returns <code>fallback</code>, or <code>0</code>, when missing or invalid.</span>
+              <code>storage.write(path, data)</code><span>Write data to the SD card as text. Numbers are stringified by the native binding.</span>
+            </div>
+            <pre><code>let count = 0;
+
+let onEnter = function() {
+  count = storage.readNumber("/.crosspoint/apps/count.txt", 0);
+};
+
+let loop = function() {
+  if (input.pressed(BTN_OK)) {
+    count = count + 1;
+    storage.write("/.crosspoint/apps/count.txt", count);
+  }
+};</code></pre>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="http network get wifi blocking">
+            <h2>HTTP</h2>
+            <div class="doc-grid">
+              <code>http.get(url)</code><span>Fetch a URL and return response text or <code>null</code> on failure. Firmware calls are blocking.</span>
+            </div>
+            <p>Use HTTP sparingly in <code>loop()</code>; long network calls block input and rendering while they run.</p>
+            <p>For apps that fetch once, do the request from <code>onEnter</code>, cache the result in memory or storage, then draw once. For user-triggered refresh, set a loading message, flush, perform the request, then redraw.</p>
+            <pre><code>let body = "Loading...";
+
+let draw = function() {
+  renderer.clear();
+  renderer.text(FONT_HEADING, 28, 50, "HTTP GET");
+  renderer.text(FONT_SMALL, 28, 105, body);
+  renderer.text(FONT_SMALL, 28, renderer.height() - 50, "BACK exits, OK reloads");
+  renderer.flush();
+};
+
+let fetchNow = function() {
+  body = "Loading...";
+  draw();
+  let response = http.get("https://example.com/status.txt");
+  if (response) {
+    body = response;
+    storage.write("/.crosspoint/apps/status-cache.txt", response);
+  } else {
+    body = "Request failed";
+  }
+  draw();
+};
+
+let onEnter = function() {
+  let cached = storage.read("/.crosspoint/apps/status-cache.txt");
+  if (cached) body = cached;
+  draw();
+};
+
+let loop = function() {
+  if (input.pressed(BTN_BACK)) app.finish();
+  if (input.pressed(BTN_OK)) fetchNow();
+};</code></pre>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="complete examples counter button storage http drawing app finish">
+            <h2>Complete Minimal App</h2>
+            <p>This app uses drawing, button input, SD-card persistence, logging, and clean exit without refreshing every frame.</p>
+            <pre><code>// @name Counter
+// @icon Text
+
+let count = 0;
+let dirty = true;
+
+let draw = function() {
+  renderer.clear();
+  renderer.text(FONT_HEADING, 42, 80, "Counter");
+  renderer.text(FONT_BODY, 42, 145, count);
+  renderer.text(FONT_SMALL, 42, 220, "OK +1, LEFT reset, BACK exit");
+  renderer.flush();
+};
+
+let onEnter = function() {
+  count = storage.readNumber("/.crosspoint/apps/counter.txt", 0);
+  dirty = true;
+};
+
+let loop = function() {
+  if (input.pressed(BTN_BACK)) {
+    storage.write("/.crosspoint/apps/counter.txt", count);
+    app.finish();
+    return;
+  }
+  if (input.pressed(BTN_OK)) {
+    count = count + 1;
+    app.log(count);
+    dirty = true;
+  }
+  if (input.pressed(BTN_LEFT)) {
+    count = 0;
+    dirty = true;
+  }
+  if (dirty) {
+    dirty = false;
+    draw();
+  }
+};</code></pre>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="patterns redraw dirty state e-ink performance back exit">
+            <h2>Redraw Pattern</h2>
+            <p>For static screens, draw and flush in <code>onEnter</code>. For interactive screens, redraw only when input changes visible state.</p>
+            <p>On device, repeated large redraws can expose Elk parser/runtime limits that the browser will not reproduce. For complex screens, draw the stable background once and redraw only the changed cells, rows, or labels.</p>
+            <pre><code>let selected = 0;
+
+let draw = function() {
+  renderer.clear();
+  renderer.text(FONT_UI, 30, 60, selected);
+  renderer.flush();
+};
+
+let onEnter = function() {
+  draw();
+};
+
+let loop = function() {
+  if (input.pressed(BTN_BACK)) {
+    app.finish();
+    return;
+  }
+  if (input.pressed(BTN_DOWN)) {
+    selected = selected + 1;
+    draw();
+  }
+};</code></pre>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="elk compatibility javascript subset parser memory stack closures limitations size lines heap game budget">
+            <h2>Elk Compatibility</h2>
+            <ul>
+              <li>Elk is a small JavaScript engine, not a full browser runtime. Avoid DOM APIs, timers, promises, modules, classes, and large libraries.</li>
+              <li>Use <code>let</code> for variables. This Elk build does not implement <code>var</code>; avoid <code>const</code> in app scripts.</li>
+              <li>Do not use browser constructors like <code>String()</code> or <code>Number()</code>. Native SDK calls stringify values where supported.</li>
+              <li>Avoid <code>== null</code>, <code>!= null</code>, <code>=== null</code>, and <code>!== null</code>. For SDK calls that return string-or-null, use positive truthy checks such as <code>if (value)</code>.</li>
+              <li>Prefer simple functions, numbers, strings, and scalar variables. Avoid arrays for now; this Elk build does not support normal browser-style array behavior.</li>
+              <li>Keep scripts small. Deeply nested code can hit parser stack limits on device before it fails in the browser emulator.</li>
+              <li>Avoid <code>while</code> loops. This Elk build reports <code>'while' not implemented</code>; use bounded <code>for</code> loops only where necessary.</li>
+              <li>Avoid repeated full redraws in <code>loop()</code> for complex screens. Use dirty rectangles or small redraw helpers for changed regions.</li>
+            </ul>
+          </section>
+
+          <section class="doc-section" data-doc-keywords="app size budget lines elk heap memory max game warning limit">
+            <h2>App Size Budget</h2>
+            <p>The current firmware gives each script a <code>32 KB</code> Elk heap and a <code>4096 byte</code> C-stack parse/eval cap. The source file is also loaded into RAM before evaluation.</p>
+            <ul>
+              <li><strong>Safe target:</strong> about <code>400-900</code> lines, or roughly <code>20 KB</code> of source.</li>
+              <li><strong>Needs device testing:</strong> about <code>900-1400</code> lines, or <code>20-32 KB</code> of source.</li>
+              <li><strong>Likely too large:</strong> more than <code>1400</code> lines or <code>32 KB</code> of source, unless the code is unusually simple.</li>
+            </ul>
+            <div class="doc-callout">Line count is only a rough signal. Long strings, arrays, object-heavy state, nested functions, and large inline data use much more memory than simple scalar logic.</div>
+          </section>
+
+          <div id="docsEmpty" class="doc-empty" hidden>No matching SDK entries.</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict/ace.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict/ext-language_tools.js"></script>
+  <script>
+    const SAMPLE = `// @name Hello World
+// @icon File
+
+let onEnter = function() {
+  app.log("hello loaded draw-once");
+  renderer.clear();
+  renderer.text(FONT_HEADING, 50, 100, "Hello World!");
+  renderer.text(FONT_SMALL, 50, 160, "Press BACK to exit");
+  renderer.flush();
+};
+
+let loop = function() {
+  if (input.pressed(BTN_BACK)) {
+    app.finish();
+  }
+};
+
+let onExit = function() {
+  app.log("hello exit");
+};`;
+
+    const DEVICES = {
+      x3: { width: 528, height: 792, name: "X3" },
+      x4: { width: 480, height: 800, name: "X4" },
+    };
+
+    const FONT_MAP = {
+      0: { size: 16, family: "Arial", weight: "400" },
+      1: { size: 20, family: "Arial", weight: "500" },
+      2: { size: 24, family: "Georgia", weight: "400" },
+      3: { size: 32, family: "Georgia", weight: "700" },
+    };
+
+    const BTN_BACK = 0;
+    const BTN_OK = 1;
+    const BTN_LEFT = 2;
+    const BTN_RIGHT = 3;
+    const BTN_UP = 4;
+    const BTN_DOWN = 5;
+    const BUTTONS = { BTN_BACK, BTN_OK, BTN_LEFT, BTN_RIGHT, BTN_UP, BTN_DOWN };
+    const BUTTON_NAMES = Object.fromEntries(Object.entries(BUTTONS).map(([name, value]) => [value, name]));
+    const ELK_SAFE_SOURCE_BYTES = 20 * 1024;
+    const ELK_HARD_SOURCE_BYTES = 32 * 1024;
+    const ELK_SAFE_LINES = 900;
+    const ELK_HARD_LINES = 1400;
+    const ICON_NAMES = new Set([
+      "Folder",
+      "Text",
+      "Image",
+      "Book",
+      "File",
+      "Recent",
+      "Settings",
+      "Transfer",
+      "Library",
+      "Wifi",
+      "Hotspot",
+      "Bookmark",
+    ]);
+
+    const codeEl = document.getElementById("code");
+    const aceHost = document.getElementById("aceEditor");
+    const canvas = document.getElementById("screen");
+    const ctx = canvas.getContext("2d");
+    const logOutput = document.getElementById("logOutput");
+    const warningsEl = document.getElementById("warnings");
+    const storageList = document.getElementById("storageList");
+    const stateStat = document.getElementById("stateStat");
+    const frameStat = document.getElementById("frameStat");
+    const flushStat = document.getElementById("flushStat");
+    const sizeStat = document.getElementById("sizeStat");
+    const fileNameEl = document.getElementById("fileName");
+
+    let appInstance = null;
+    let loopTimer = null;
+    let frame = 0;
+    let flushes = 0;
+    let framebufferDirty = false;
+    let pendingRefresh = false;
+    let finished = false;
+    let pressedButtons = new Set();
+    let pressedEdges = new Set();
+    let releasedEdges = new Set();
+    let storageData = loadJson("crosspoint-script-storage", {});
+    let aceEditor = null;
+
+    function loadJson(key, fallback) {
+      try {
+        return JSON.parse(localStorage.getItem(key)) || fallback;
+      } catch (_) {
+        return fallback;
+      }
+    }
+
+    function saveStorage() {
+      localStorage.setItem("crosspoint-script-storage", JSON.stringify(storageData));
+      renderStorage();
+    }
+
+    function log(level, message) {
+      const t = String(Math.round(performance.now())).padStart(6, " ");
+      logOutput.textContent += `[${t}] [${level}] ${message}\n`;
+      logOutput.scrollTop = logOutput.scrollHeight;
+    }
+
+    function setState(value) {
+      stateStat.textContent = value;
+      document.getElementById("runBtn").disabled = value === "running";
+      document.getElementById("stopBtn").disabled = value !== "running";
+    }
+
+    function initEditor(initialCode) {
+      codeEl.value = initialCode;
+      if (!window.ace) {
+        document.body.classList.add("no-ace");
+        return;
+      }
+
+      window.ace.config.set("basePath", "https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict");
+      window.ace.config.set("modePath", "https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict");
+      window.ace.config.set("themePath", "https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict");
+      window.ace.config.set("workerPath", "https://cdn.jsdelivr.net/npm/ace-builds@1.32.6/src-min-noconflict");
+      aceEditor = window.ace.edit(aceHost, {
+        value: initialCode,
+        mode: "ace/mode/javascript",
+        theme: "ace/theme/tomorrow_night",
+        fontSize: 13,
+        tabSize: 2,
+        useSoftTabs: true,
+        wrap: true,
+        showPrintMargin: false,
+        highlightActiveLine: true,
+        enableBasicAutocompletion: true,
+        enableLiveAutocompletion: true,
+        enableSnippets: true,
+      });
+      aceEditor.session.setUseWorker(false);
+      aceEditor.commands.addCommand({
+        name: "saveScript",
+        bindKey: { win: "Ctrl-S", mac: "Command-S" },
+        exec: saveCode,
+      });
+      aceEditor.commands.addCommand({
+        name: "runScript",
+        bindKey: { win: "Ctrl-Enter", mac: "Command-Enter" },
+        exec: runApp,
+      });
+      aceEditor.session.on("change", lint);
+      setTimeout(() => aceEditor.resize(), 0);
+    }
+
+    function getCode() {
+      return aceEditor ? aceEditor.getValue() : codeEl.value;
+    }
+
+    function setCode(value) {
+      codeEl.value = value;
+      if (aceEditor) {
+        aceEditor.setValue(value, -1);
+        aceEditor.focus();
+      }
+      lint();
+    }
+
+    function setDevice() {
+      const device = DEVICES[document.getElementById("deviceSelect").value];
+      canvas.width = device.width;
+      canvas.height = device.height;
+      sizeStat.textContent = `${device.width} x ${device.height}`;
+      clearCanvas();
+    }
+
+    function clearCanvas(color = "#fafbf4") {
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+      framebufferDirty = true;
+    }
+
+    function drawText(fontId, x, y, text, black = true) {
+      const font = FONT_MAP[fontId] || FONT_MAP[1];
+      ctx.save();
+      ctx.fillStyle = black ? "#111111" : "#ffffff";
+      ctx.font = `${font.weight} ${font.size}px ${font.family}`;
+      ctx.textBaseline = "top";
+      ctx.fillText(String(text), x, y);
+      ctx.restore();
+      framebufferDirty = true;
+    }
+
+    function flush() {
+      if (!framebufferDirty) {
+        log("DBG", "renderer.flush ignored dirty=0");
+        return;
+      }
+      if (pendingRefresh) {
+        log("DBG", "renderer.flush ignored pending=1");
+        return;
+      }
+      pendingRefresh = true;
+      framebufferDirty = false;
+      flushes += 1;
+      flushStat.textContent = String(flushes);
+      log("DBG", `renderer.flush accepted (${flushes})`);
+
+      if (document.getElementById("refreshSelect").value === "instant") {
+        pendingRefresh = false;
+        return;
+      }
+
+      canvas.style.opacity = "0.72";
+      setTimeout(() => {
+        canvas.style.opacity = "1";
+        pendingRefresh = false;
+        log("DBG", "Refresh done: X3_DRF (sim)");
+      }, 380);
+    }
+
+    function createSandbox() {
+      const renderer = {
+        clear: () => clearCanvas(),
+        text: (fontId, x, y, text, black = true) => drawText(fontId, x, y, text, black),
+        fillRect: (x, y, w, h, black = true) => {
+          ctx.save();
+          ctx.fillStyle = black ? "#111111" : "#ffffff";
+          ctx.fillRect(x, y, w, h);
+          ctx.restore();
+          framebufferDirty = true;
+        },
+        rect: (x, y, w, h) => {
+          ctx.save();
+          ctx.strokeStyle = "#111111";
+          ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+          ctx.restore();
+          framebufferDirty = true;
+        },
+        width: () => canvas.width,
+        height: () => canvas.height,
+        flush,
+      };
+
+      const input = {
+        pressed: (button) => pressedEdges.has(button),
+        released: (button) => releasedEdges.has(button),
+        held: (button) => pressedButtons.has(button),
+      };
+
+      const storage = {
+        read: (path) => Object.prototype.hasOwnProperty.call(storageData, path) ? storageData[path] : null,
+        readNumber: (path, fallback = 0) => {
+          if (!Object.prototype.hasOwnProperty.call(storageData, path)) return Number(fallback) || 0;
+          const value = Number(storageData[path]);
+          return Number.isFinite(value) ? value : Number(fallback) || 0;
+        },
+        write: (path, data) => {
+          storageData[String(path)] = String(data);
+          saveStorage();
+          return true;
+        },
+      };
+
+      const http = {
+        get: (url) => {
+          log("INF", `http.get mocked: ${url}`);
+          return null;
+        },
+      };
+
+      const app = {
+        finish: () => {
+          finished = true;
+          log("INF", "app.finish");
+        },
+        log: (message) => log("JS", JSON.stringify(String(message))),
+      };
+
+      return {
+        renderer,
+        input,
+        storage,
+        http,
+        app,
+        BTN_BACK,
+        BTN_OK,
+        BTN_LEFT,
+        BTN_RIGHT,
+        BTN_UP,
+        BTN_DOWN,
+        FONT_SMALL: 0,
+        FONT_UI: 1,
+        FONT_BODY: 2,
+        FONT_HEADING: 3,
+        console: { log: (...args) => log("JS", args.map(String).join(" ")) },
+      };
+    }
+
+    function validateScriptFormat(code) {
+      const errors = [];
+      const nameMatch = code.match(/^\/\/\s*@name\s+(.+)$/m);
+      const iconMatch = code.match(/^\/\/\s*@icon\s+(.+)$/m);
+      const lifecycleHook = /\blet\s+(onEnter|loop|onExit)\s*=\s*function\s*\(/;
+
+      if (!nameMatch || !nameMatch[1].trim()) {
+        errors.push("App format: add a metadata line like `// @name Counter`.");
+      }
+      if (!iconMatch || !iconMatch[1].trim()) {
+        errors.push("App format: add a metadata line like `// @icon File`.");
+      } else {
+        const iconName = iconMatch[1].trim();
+        if (!ICON_NAMES.has(iconName)) {
+          errors.push(`App format: unsupported @icon '${iconName}'. Use one of: ${Array.from(ICON_NAMES).join(", ")}.`);
+        }
+      }
+      if (/\bvar\s+\w+/.test(code)) {
+        errors.push("Elk compatibility: `var` is not implemented on device. Use `let` instead.");
+      }
+      if (/\bconst\s+\w+/.test(code)) {
+        errors.push("App format: use `let`, not `const`, so browser-tested code stays close to Elk device syntax.");
+      }
+      if (/(?:===|!==|==|!=)\s*null|\bnull\s*(?:===|!==|==|!=)/.test(code)) {
+        errors.push("Elk compatibility: avoid null equality comparisons; use truthy checks like `if (value)` or SDK helpers such as `storage.readNumber()`.");
+      }
+      if (/\bNumber\s*\(/.test(code)) {
+        errors.push("Elk compatibility: `Number()` is not available on device. Use `storage.readNumber()` for persisted numeric values.");
+      }
+      if (/\bString\s*\(/.test(code)) {
+        errors.push("Elk compatibility: `String()` is not available on device. Pass values directly to SDK calls that stringify, or store plain strings.");
+      }
+      if (/\*\s*1\b/.test(code)) {
+        errors.push("Elk compatibility: string numeric coercion like `value * 1` throws `type mismatch`. Use `storage.readNumber()`.");
+      }
+      if (/\bwhile\s*\(/.test(code)) {
+        errors.push("Elk compatibility: `while` is not implemented on device. Use bounded `for` loops or state-machine work in `loop()`.");
+      }
+      if (/(^|[=(:,]\s*)\[[^\]]*\]/m.test(code)) {
+        errors.push("Elk compatibility: array literals are not supported reliably on device. Use scalar variables or small lookup functions.");
+      }
+      if (/\]\s*=/.test(code)) {
+        errors.push("Elk compatibility: indexed assignment is not supported reliably on device. Use scalar variables or setter functions.");
+      }
+      if (/\(\s*!\s*[A-Za-z_$][\w$]*\s*\)/.test(code)) {
+        errors.push("Elk compatibility: avoid `if (!value)` on possibly-null SDK results; use positive truthy checks like `if (value)`.");
+      }
+      if (/\bfunction\s+(onEnter|loop|onExit)\s*\(/.test(code)) {
+        errors.push("App format: lifecycle hooks must use `let loop = function() {}` assignment syntax.");
+      }
+      code.split(/\n/).forEach((line, index) => {
+        if (/\b(onEnter|loop|onExit)\s*=\s*function\s*\(/.test(line) &&
+            !/\blet\s+(onEnter|loop|onExit)\s*=\s*function\s*\(/.test(line)) {
+          errors.push(`App format line ${index + 1}: lifecycle hook assignments must start with \`let\`.`);
+        }
+      });
+      if (!lifecycleHook.test(code)) {
+        errors.push("App format: define at least one lifecycle hook: `let onEnter`, `let loop`, or `let onExit`.");
+      }
+      const drawMatch = code.match(/\blet\s+draw\s*=\s*function\s*\([^)]*\)\s*\{([\s\S]*?)\n\};/);
+      const loopMatch = code.match(/\blet\s+loop\s*=\s*function\s*\([^)]*\)\s*\{([\s\S]*?)\n\};/);
+      if (drawMatch && loopMatch && /\bdraw\s*\(\s*\)/.test(loopMatch[1])) {
+        const renderCalls = (drawMatch[1].match(/\brenderer\.|\bdraw[A-Z]\w*\s*\(/g) || []).length;
+        if (renderCalls > 24) {
+          errors.push("Elk compatibility: `loop()` repeatedly calls a large `draw()` function. Complex full redraws can pass in the browser but fail on device; draw once, then redraw changed regions.");
+        }
+      }
+      return errors;
+    }
+
+    function compile(code) {
+      const formatErrors = validateScriptFormat(code);
+      if (formatErrors.length) throw new Error(formatErrors.join("\n"));
+      const sandbox = createSandbox();
+      const keys = Object.keys(sandbox);
+      const values = keys.map((key) => sandbox[key]);
+      const source = `"use strict";\n${code}\nreturn {\n  onEnter: typeof onEnter === "function" ? onEnter : null,\n  loop: typeof loop === "function" ? loop : null,\n  onExit: typeof onExit === "function" ? onExit : null,\n};`;
+      const factory = new Function(...keys, source);
+      return { hooks: factory(...values), sandbox };
+    }
+
+    function runApp() {
+      stopApp(false);
+      logOutput.textContent = "";
+      frame = 0;
+      flushes = 0;
+      frameStat.textContent = "0";
+      flushStat.textContent = "0";
+      pendingRefresh = false;
+      framebufferDirty = false;
+      finished = false;
+      clearCanvas();
+
+      try {
+        appInstance = compile(getCode());
+        if (appInstance.hooks.onEnter) appInstance.hooks.onEnter();
+        setState("running");
+        loopTimer = setInterval(tick, 33);
+      } catch (error) {
+        setState("error");
+        log("ERR", error.message);
+      }
+    }
+
+    function tick() {
+      if (!appInstance || finished) {
+        stopApp(true);
+        return;
+      }
+      frame += 1;
+      frameStat.textContent = String(frame);
+      try {
+        if (appInstance.hooks.loop) appInstance.hooks.loop();
+      } catch (error) {
+        log("ERR", error.message);
+        stopApp(true);
+      }
+      pressedEdges.clear();
+      releasedEdges.clear();
+      if (finished) stopApp(true);
+    }
+
+    function stepApp() {
+      if (!appInstance) {
+        try {
+          appInstance = compile(getCode());
+          if (appInstance.hooks.onEnter) appInstance.hooks.onEnter();
+          setState("stepping");
+        } catch (error) {
+          setState("error");
+          log("ERR", error.message);
+          return;
+        }
+      }
+      tick();
+    }
+
+    function stopApp(callExit) {
+      if (loopTimer) {
+        clearInterval(loopTimer);
+        loopTimer = null;
+      }
+      if (callExit && appInstance && appInstance.hooks.onExit) {
+        try {
+          appInstance.hooks.onExit();
+        } catch (error) {
+          log("ERR", error.message);
+        }
+      }
+      appInstance = null;
+      pressedEdges.clear();
+      releasedEdges.clear();
+      pressedButtons.clear();
+      setState("stopped");
+    }
+
+    function setButton(button, down) {
+      const id = BUTTONS[button] ?? button;
+      if (down) {
+        if (!pressedButtons.has(id)) pressedEdges.add(id);
+        pressedButtons.add(id);
+      } else {
+        if (pressedButtons.has(id)) releasedEdges.add(id);
+        pressedButtons.delete(id);
+      }
+      log("DBG", `${BUTTON_NAMES[id] || id} ${down ? "down" : "up"}`);
+    }
+
+    function pulseButton(button) {
+      setButton(button, true);
+      setTimeout(() => setButton(button, false), 80);
+    }
+
+    function lint() {
+      const code = getCode();
+      const warnings = [];
+      const formatErrors = validateScriptFormat(code);
+      formatErrors.forEach((error) => warnings.push(`Error: ${error}`));
+      const sourceBytes = new Blob([code]).size;
+      const sourceLines = code.split(/\n/).length;
+      if (sourceBytes > ELK_HARD_SOURCE_BYTES || sourceLines > ELK_HARD_LINES) {
+        warnings.push(`Elk size warning: this script is ${sourceLines} lines / ${sourceBytes} bytes. Current firmware uses a 32 KB Elk heap, so this is likely too large for device testing.`);
+      } else if (sourceBytes > ELK_SAFE_SOURCE_BYTES || sourceLines > ELK_SAFE_LINES) {
+        warnings.push(`Elk size warning: this script is ${sourceLines} lines / ${sourceBytes} bytes. It may run, but test on device early; long strings, arrays, and nested functions can exceed Elk memory/stack limits.`);
+      }
+      if (/let\s+\w+\s*=.*;\s*[\s\S]*\bloop\s*=\s*function[\s\S]*renderer\.flush\s*\(/.test(code)) {
+        warnings.push("E-ink warning: `renderer.flush()` inside loop can cause repeated full refreshes. Prefer drawing in onEnter or only after state changes.");
+      }
+      warningsEl.textContent = warnings.length ? warnings.join("\n") : "No warnings.";
+    }
+
+    function renderStorage() {
+      const entries = Object.entries(storageData);
+      storageList.textContent = entries.length
+        ? entries.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join("\n")
+        : "No mock storage entries.";
+    }
+
+    function saveCode() {
+      localStorage.setItem("crosspoint-script-code", getCode());
+      localStorage.setItem("crosspoint-script-file-name", fileNameEl.value);
+      log("INF", "Saved editor state");
+    }
+
+    function downloadCode() {
+      const blob = new Blob([getCode()], { type: "text/javascript" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileNameEl.value || "app.js";
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function setupTabs() {
+      document.querySelectorAll(".tab[data-panel]").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          document.querySelectorAll(".tab[data-panel]").forEach((item) => {
+            const active = item === tab;
+            item.classList.toggle("active", active);
+            item.setAttribute("aria-selected", String(active));
+            const panel = document.getElementById(item.dataset.panel);
+            if (panel) {
+              panel.classList.toggle("active", active);
+              panel.hidden = !active;
+            }
+          });
+          if (tab.dataset.panel === "previewPanel" && aceEditor) {
+            setTimeout(() => aceEditor.resize(), 0);
+          }
+        });
+      });
+    }
+
+    function filterDocs() {
+      const query = document.getElementById("docsSearch").value.trim().toLowerCase();
+      let visibleCount = 0;
+      document.querySelectorAll(".doc-section").forEach((section) => {
+        const haystack = `${section.textContent} ${section.dataset.docKeywords || ""}`.toLowerCase();
+        const visible = !query || haystack.includes(query);
+        section.hidden = !visible;
+        if (visible) visibleCount += 1;
+      });
+      document.getElementById("docsEmpty").hidden = visibleCount !== 0;
+    }
+
+    function isTypingTarget(target) {
+      return target instanceof HTMLElement && Boolean(target.closest("input, textarea, .ace_editor"));
+    }
+
+    document.getElementById("runBtn").addEventListener("click", runApp);
+    document.getElementById("stopBtn").addEventListener("click", () => stopApp(true));
+    document.getElementById("stepBtn").addEventListener("click", stepApp);
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      stopApp(false);
+      clearCanvas();
+      logOutput.textContent = "";
+      frame = 0;
+      flushes = 0;
+      frameStat.textContent = "0";
+      flushStat.textContent = "0";
+    });
+    document.getElementById("sampleBtn").addEventListener("click", () => {
+      setCode(SAMPLE);
+    });
+    document.getElementById("saveBtn").addEventListener("click", saveCode);
+    document.getElementById("downloadBtn").addEventListener("click", downloadCode);
+    document.getElementById("clearLogBtn").addEventListener("click", () => logOutput.textContent = "");
+    document.getElementById("clearStorageBtn").addEventListener("click", () => {
+      storageData = {};
+      saveStorage();
+    });
+    document.getElementById("deviceSelect").addEventListener("change", setDevice);
+    document.getElementById("pulseBackBtn").addEventListener("click", () => pulseButton("BTN_BACK"));
+    document.getElementById("docsSearch").addEventListener("input", filterDocs);
+    codeEl.addEventListener("input", lint);
+
+    document.querySelectorAll("[data-btn]").forEach((button) => {
+      const name = button.dataset.btn;
+      button.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        button.setPointerCapture(event.pointerId);
+        setButton(name, true);
+      });
+      button.addEventListener("pointerup", () => setButton(name, false));
+      button.addEventListener("pointercancel", () => setButton(name, false));
+      button.addEventListener("pointerleave", () => {
+        if (pressedButtons.has(BUTTONS[name])) setButton(name, false);
+      });
+    });
+
+    const keyMap = {
+      Backspace: "BTN_BACK",
+      Escape: "BTN_BACK",
+      Enter: "BTN_OK",
+      ArrowLeft: "BTN_LEFT",
+      ArrowRight: "BTN_RIGHT",
+      ArrowUp: "BTN_UP",
+      ArrowDown: "BTN_DOWN",
+    };
+
+    window.addEventListener("keydown", (event) => {
+      if (isTypingTarget(event.target) || event.repeat || !keyMap[event.key]) return;
+      event.preventDefault();
+      setButton(keyMap[event.key], true);
+    });
+
+    window.addEventListener("keyup", (event) => {
+      if (isTypingTarget(event.target) || !keyMap[event.key]) return;
+      event.preventDefault();
+      setButton(keyMap[event.key], false);
+    });
+
+    initEditor(localStorage.getItem("crosspoint-script-code") || SAMPLE);
+    fileNameEl.value = localStorage.getItem("crosspoint-script-file-name") || "hello.js";
+    setupTabs();
+    filterDocs();
+    setDevice();
+    renderStorage();
+    lint();
+    setState("stopped");
+  </script>
+</body>
+</html>
